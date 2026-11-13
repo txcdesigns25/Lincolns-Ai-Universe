@@ -80,3 +80,41 @@ describe("Telegram push updates", () => {
     expect(n).toBe(2);
   });
 });
+
+describe("two-way Telegram chat", () => {
+  it("labels agent messages, and replying to one continues the chat with that agent", async () => {
+    const { setTelegramTransport, sendFromAgent, rawSend } = await import("../src/telegram.js");
+    const out: { id: number; text: string }[] = [];
+    const orig = rawSend;
+    setTelegramTransport(async (_c, text) => { out.push({ id: 1000 + out.length, text }); return 1000 + out.length - 1; });
+    try {
+      const mid = await sendFromAgent(db, 4242, "digital_store", "Which niche should I avoid?");
+      expect(out[0].text).toMatch(/^Digital Product Store:\nWhich niche/);
+      // Owner replies (Telegram reply) without naming the agent.
+      await handleTelegramUpdate(db, { message: { text: "Avoid anything with cars", from: { id: 4242 }, chat: { id: 4242, type: "private" },
+        reply_to_message: { message_id: mid, text: out[0].text } } }, send, OWNER);
+      const t = (await db.query(`SELECT agent_id, payload FROM tasks WHERE title LIKE 'Owner chat: Avoid anything%'`)).rows[0];
+      expect(t.agent_id).toBe("digital_store");
+      expect(t.payload.replying_to_your_message).toMatch(/Which niche/);
+      expect(t.payload.conversation_so_far.at(-1)).toBe("You: Which niche should I avoid?");
+      expect(t.payload.reply_to_telegram_chat).toBe(4242);
+      // Plain text without a reply still goes to the CEO.
+      await handleTelegramUpdate(db, msg("how are we doing"), send, OWNER);
+      expect((await db.query(`SELECT agent_id FROM tasks WHERE title = 'Owner chat: how are we doing'`)).rows[0].agent_id).toBe("ceo");
+    } finally { setTelegramTransport(orig); }
+  });
+
+  it("an agent's 'needs you' alert can be answered by replying to it", async () => {
+    const { setTelegramTransport, rawSend } = await import("../src/telegram.js");
+    const orig = rawSend; let n = 5000;
+    setTelegramTransport(async () => n++);
+    try {
+      const { notify } = await import("../src/notify.js");
+      await notify(db, { severity: "warning", agentId: "seo_agency", title: "SEO Agency needs you: Search Console access", dedupeKey: "chat-test" });
+      const row = (await db.query(`SELECT message_id, agent_id FROM telegram_messages WHERE agent_id = 'seo_agency' ORDER BY id DESC LIMIT 1`)).rows[0];
+      await handleTelegramUpdate(db, { message: { text: "Added you as a user", from: { id: 4242 }, chat: { id: 4242, type: "private" },
+        reply_to_message: { message_id: Number(row.message_id), text: "x" } } }, send, OWNER);
+      expect((await db.query(`SELECT agent_id FROM tasks WHERE title = 'Owner chat: Added you as a user'`)).rows[0].agent_id).toBe("seo_agency");
+    } finally { setTelegramTransport(orig); }
+  });
+});

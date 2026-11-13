@@ -11,7 +11,7 @@ export async function notify(q: Queryable, n: { severity: "info" | "warning" | "
      ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
     [n.severity, n.agentId ?? null, n.title, n.body ?? "", n.dedupeKey ?? null]);
   if (!r.rowCount) return;
-  if (n.severity !== "info") await notifyOwnerTelegram(`AI Universe ${n.severity}: ${n.title}${n.body ? `\n${n.body}` : ""}`).catch(() => {});
+  if (n.severity !== "info") await notifyOwnerTelegram(`${n.severity === "critical" ? "🚨" : "⚠️"} ${n.title}${n.body ? `\n${n.body}` : ""}${n.agentId ? "\n\n(Reply to this message to answer the agent.)" : ""}`, { db: q, agentId: n.agentId }).catch(() => {});
   const url = process.env.NOTIFY_WEBHOOK_URL;
   if (!url) return;
   try {

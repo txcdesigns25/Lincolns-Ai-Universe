@@ -7,7 +7,7 @@
  * changes, live mode, and releasing the emergency stop are dashboard-only, so
  * a lost or hijacked phone cannot unlock spending.
  */
-import type { Db } from "./db.js";
+import type { Db, Queryable } from "./db.js";
 import { AGENTS, AGENT_BY_ID } from "./agents.js";
 import { decideApproval } from "./approvals.js";
 import { engageEmergencyStop } from "./controls.js";
@@ -34,7 +34,8 @@ export type Send = (chatId: number, text: string) => Promise<void>;
 
 const HELP = `AI Universe commands:
 /status – money, agents, approvals
-/ask <agent> <message> – give an agent a task (plain text goes to the CEO)
+Plain text goes to the CEO. Reply (swipe left) to any agent's message to keep chatting with that agent.
+/ask <agent> <message> – start a chat with a specific agent
 /pause <agent|all>   /resume <agent|all>
 /approvals – list pending requests
 /approve <id>   /reject <id>  (money/legal approvals: dashboard only)
@@ -56,6 +57,13 @@ export async function handleTelegramUpdate(db: Db, update: any, send: Send, owne
     return;
   }
   const text: string = msg.text.trim();
+  // Replying to one of the bot's messages continues the chat with the agent that sent it.
+  const repliedTo = msg.reply_to_message?.message_id;
+  if (repliedTo && !text.startsWith("/")) {
+    const orig = (await db.query(`SELECT agent_id FROM telegram_messages WHERE chat_id = $1 AND message_id = $2`, [chatId, repliedTo])).rows[0];
+    const agentId = orig?.agent_id ?? null;
+    if (agentId) return askAgent(db, agentId, text, chatId, send, { inReplyTo: String(msg.reply_to_message?.text ?? "").slice(0, 1500) });
+  }
   const [cmdRaw, ...rest] = text.split(/\s+/);
   // Accept commands with or without the slash ("status" works like "/status").
   const BARE = new Set(["status", "help", "start", "agents", "approvals", "pause", "resume", "approve", "reject", "stop", "ask", "boost", "activity", "updates", "commands"]);
@@ -130,15 +138,31 @@ export async function handleTelegramUpdate(db: Db, update: any, send: Send, owne
   }
 }
 
-async function askAgent(db: Db, agentId: string, message: string, chatId: number, send: Send) {
-  if (message.length < 3) return send(chatId, "What should the agent do?");
+/** Recent Telegram conversation between the owner and one agent, oldest first. */
+export async function chatHistory(db: Db, agentId: string, chatId: number, limit = 8) {
+  const rows = (await db.query(
+    `SELECT direction, text FROM telegram_messages WHERE agent_id = $1 AND chat_id = $2 AND created_at > now() - interval '3 days'
+      ORDER BY created_at DESC LIMIT $3`, [agentId, chatId, limit])).rows.reverse();
+  return rows.map((r) => `${r.direction === "in" ? "Owner" : "You"}: ${r.text.slice(0, 600)}`);
+}
+
+async function askAgent(db: Db, agentId: string, message: string, chatId: number, send: Send, ctx: { inReplyTo?: string } = {}) {
+  if (message.length < 2) return send(chatId, "What should the agent do?");
   const status = (await db.query(`SELECT status FROM agents WHERE id = $1`, [agentId])).rows[0]?.status;
-  await enqueue(db, { agentId, type: "directive", title: `Owner request: ${message.slice(0, 80)}`,
-    payload: { instructions: message, from: "owner via Telegram", reply_to_telegram_chat: chatId }, priority: 2, createdBy: "owner" });
+  const history = await chatHistory(db, agentId, chatId);
+  await db.query(`INSERT INTO telegram_messages (chat_id, agent_id, direction, text) VALUES ($1,$2,'in',$3)`, [chatId, agentId, message.slice(0, 4000)]);
+  await enqueue(db, { agentId, type: "directive", title: `Owner chat: ${message.slice(0, 80)}`,
+    payload: {
+      instructions: message, from: "owner via Telegram", reply_to_telegram_chat: chatId,
+      chat_mode: "This is a live two-way chat with the owner on Telegram. Your final message is sent to them as your reply: answer directly and briefly, like a text message. Do any work they ask for with your tools first. If you need something from them, ask one clear question at the end; their reply comes back to you.",
+      ...(history.length ? { conversation_so_far: history } : {}),
+      ...(ctx.inReplyTo ? { replying_to_your_message: ctx.inReplyTo } : {}),
+    }, priority: 2, createdBy: "owner" });
   const short = Object.entries(ALIASES).find(([, v]) => v === agentId)?.[0] ?? agentId;
   if (status !== "active")
     return send(chatId, `Queued for ${AGENT_BY_ID[agentId].name}, but it's ${status}, so it won't answer yet.\nSend "/resume ${short}" to let it work (it uses AI budget), or "/resume all" for every agent. Your message will run as soon as it's resumed.`);
-  return send(chatId, `Sent to ${AGENT_BY_ID[agentId].name}. I'll message you the answer when it's done (usually within a minute).`);
+  if (history.length || ctx.inReplyTo) return; // mid-conversation: the agent's reply is the acknowledgement
+  return send(chatId, `${AGENT_BY_ID[agentId].name} is on it. Reply to its answer to keep chatting.`);
 }
 
 export async function updatesOn(db: Db): Promise<boolean> {
@@ -166,7 +190,7 @@ export async function activityText(db: Db) {
 }
 
 /** Push approval requests the owner has not been told about yet, with buttons where Telegram may decide. */
-export async function pushPendingApprovals(db: Db, sendButtons = telegramSendButtons): Promise<number> {
+export async function pushPendingApprovals(db: Db, sendButtons: (chatId: number, text: string, buttons: { text: string; callback_data: string }[][]) => Promise<unknown> = telegramSendButtons): Promise<number> {
   if (!telegramConfigured()) return 0;
   const rows = (await db.query(
     `UPDATE approvals SET notified_at = now() WHERE id IN (
@@ -178,7 +202,8 @@ export async function pushPendingApprovals(db: Db, sendButtons = telegramSendBut
     const why = r.details?.reason ?? r.details?.justification ?? r.details?.expected_benefit;
     const text = `⏳ ${AGENT_BY_ID[r.agent_id]?.name ?? r.agent_id} is asking for approval\n\n${r.summary}${r.amount_cents ? `\nAmount: ${money(r.amount_cents)}` : ""}${why ? `\nWhy: ${clip(String(why), 300)}` : ""}\n\n${dashOnly ? "This involves money or legal commitments, so approve it in the dashboard (Approvals). You can reject it here." : "Tap to decide."}`;
     const buttons = dashOnly ? [[{ text: "Reject", callback_data: `rj:${r.id}` }]] : [[{ text: "✅ Approve", callback_data: `ap:${r.id}` }, { text: "Reject", callback_data: `rj:${r.id}` }]];
-    await sendButtons(owner, text, buttons).catch(() => {});
+    if (sendButtons === telegramSendButtons) await sendFromAgent(db, owner, r.agent_id, text, { buttons, label: false });
+    else await sendButtons(owner, text, buttons).catch(() => {});
   }
   return rows.length;
 }
@@ -205,7 +230,8 @@ export async function handleTelegramCallback(db: Db, cq: any, ownerId = process.
  * other scheduled agent work sends a one-line update unless /updates off.
  * Owner requests are answered separately (reply_to_telegram_chat).
  */
-export async function pushTaskUpdate(db: Db, task: { agent_id: string; type: string; title: string; created_by: string; payload?: any }, result: any, send: Send = telegramSend) {
+export async function pushTaskUpdate(db: Db, task: { agent_id: string; type: string; title: string; created_by: string; payload?: any; id?: string }, result: any,
+  send: Send = (c, t) => sendFromAgent(db, c, task.agent_id, t, { taskId: task.id, label: false }).then(() => {})) {
   if (!telegramConfigured() || task.payload?.reply_to_telegram_chat || task.type === "health_check" || task.type === "execute_action") return;
   const owner = Number(process.env.TELEGRAM_OWNER_ID);
   const summary = String(result?.summary ?? "").trim();
@@ -247,13 +273,35 @@ export const telegramSend: Send = async (chatId, text) => {
   });
 };
 
-export async function telegramSendButtons(chatId: number, text: string, buttons: { text: string; callback_data: string }[][]) {
+export async function telegramSendButtons(chatId: number, text: string, buttons: { text: string; callback_data: string }[][]): Promise<number | null> {
+  return rawSend(chatId, text, { inline_keyboard: buttons });
+}
+
+/** Low-level send. Returns Telegram's message_id so replies can be routed. Replaceable in tests. */
+export let rawSend = async (chatId: number, text: string, replyMarkup?: unknown): Promise<number | null> => {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  if (!token) return;
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  if (!token) return null;
+  const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4000), disable_web_page_preview: true, reply_markup: { inline_keyboard: buttons } }),
+    body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4000), disable_web_page_preview: true, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
   });
+  const j: any = await r.json().catch(() => null);
+  return j?.result?.message_id ?? null;
+};
+export function setTelegramTransport(fn: typeof rawSend) { rawSend = fn; }
+
+/**
+ * Send a message on behalf of an agent: labeled with the agent's name and
+ * remembered, so replying to it in Telegram goes back to that agent.
+ */
+export async function sendFromAgent(db: Queryable, chatId: number, agentId: string | null, text: string,
+  opts: { taskId?: string | null; buttons?: { text: string; callback_data: string }[][]; label?: boolean } = {}) {
+  const name = agentId ? AGENT_BY_ID[agentId]?.name ?? agentId : null;
+  const body = name && opts.label !== false ? `${name}:\n${text}` : text;
+  const messageId = await rawSend(chatId, body, opts.buttons ? { inline_keyboard: opts.buttons } : undefined).catch(() => null);
+  await db.query(`INSERT INTO telegram_messages (chat_id, message_id, agent_id, task_id, direction, text) VALUES ($1,$2,$3,$4,'out',$5)
+                     ON CONFLICT DO NOTHING`, [chatId, messageId, agentId, opts.taskId ?? null, text.slice(0, 4000)]).catch(() => {});
+  return messageId;
 }
 
 async function tgCall(method: string, body: unknown) {
@@ -262,9 +310,11 @@ async function tgCall(method: string, body: unknown) {
   await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
-export async function notifyOwnerTelegram(text: string) {
+export async function notifyOwnerTelegram(text: string, ctx?: { db: Queryable; agentId?: string | null }) {
   if (!telegramConfigured()) return;
-  await telegramSend(Number(process.env.TELEGRAM_OWNER_ID), text);
+  const owner = Number(process.env.TELEGRAM_OWNER_ID);
+  if (ctx?.db) { await sendFromAgent(ctx.db, owner, ctx.agentId ?? null, text, { label: false }); return; }
+  await telegramSend(owner, text);
 }
 
 /**

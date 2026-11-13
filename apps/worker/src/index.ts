@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import {
   tiersFromEnv, releaseStaleReservations, getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
   extendLease, runTask, tickScheduler, processInboundEvents, PolicyDenied, RetryableError, AwaitingApproval, notify, audit,
-  telegramConfigured, pollTelegramOnce, telegramSend, initTelegram, pushPendingApprovals, pushTaskUpdate,
+  telegramConfigured, pollTelegramOnce, telegramSend, sendFromAgent, initTelegram, pushPendingApprovals, pushTaskUpdate,
   syncStore, shopifyConfigured, isEmergencyStopped,
 } from "@universe/core";
 
@@ -67,7 +67,7 @@ async function runOne(): Promise<boolean> {
     const result = await runTask({ db, llm, workerId }, task);
     await completeTask(db, task.id, workerId, result);
     const chat = (task.payload as any)?.reply_to_telegram_chat;
-    if (chat) await telegramSend(chat, `${task.agent_id}: ${(result as any)?.summary || "Done."}`.slice(0, 4000)).catch(() => {});
+    if (chat) await sendFromAgent(db, chat, task.agent_id, String((result as any)?.summary || "Done.").slice(0, 3900), { taskId: task.id }).catch(() => {});
     await pushTaskUpdate(db, task, result).catch(() => {});
     await db.query(`UPDATE workers SET tasks_done = tasks_done + 1 WHERE id = $1`, [workerId]);
     log(`done ${task.id}`);

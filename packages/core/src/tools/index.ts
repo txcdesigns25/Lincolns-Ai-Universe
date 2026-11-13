@@ -147,7 +147,7 @@ export const TOOLS: ToolSpec[] = [
       const sent = (await ctx.db.query(`SELECT count(*)::int AS n FROM notifications WHERE dedupe_key LIKE $1`, [`blocked:${ctx.agentId}:${day}:%`])).rows[0].n;
       if (sent >= 2) throw new PolicyDenied("owner_notify_limit", "Already messaged the owner twice today; record the blocker in memory and work on something else");
       await notify(ctx.db, { severity: "warning", agentId: ctx.agentId, title: `${AGENT_BY_ID[ctx.agentId]?.name ?? ctx.agentId} needs you: ${i.need}`,
-        body: `Why: ${i.why}\nReply with: ${ctx.agentId === "ceo" ? "" : "/ask " + ctx.agentId + " "}<your answer>`, dedupeKey: `blocked:${ctx.agentId}:${day}:${sent + 1}` });
+        body: `Why: ${i.why}`, dedupeKey: `blocked:${ctx.agentId}:${day}:${sent + 1}` });
       return { sent: true, remaining_today: 1 - sent };
     },
   }),
