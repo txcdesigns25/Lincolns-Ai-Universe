@@ -126,7 +126,6 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
             <p className="mt-1 text-xs text-muted">Off: approved external actions are simulated. On: approved actions use real integrations (when credentials exist).</p>
             <form action={setLiveMode} className="mt-2 flex flex-wrap items-center gap-2">
               <input type="hidden" name="agent_id" value={id} /><input type="hidden" name="live" value={agent.live_mode ? "false" : "true"} />
-              {!agent.live_mode && <input name="confirm" placeholder="Type LIVE" className="w-28" />}
               <Button tone={agent.live_mode ? "default" : "danger"}>{agent.live_mode ? "Switch to sandbox" : "Enable live mode"}</Button>
             </form>
           </div>

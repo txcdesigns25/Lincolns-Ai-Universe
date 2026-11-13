@@ -2,7 +2,8 @@ import Link from "next/link";
 import { PageHeader, Badge, Money, Button } from "@/components/ui";
 import { Meter } from "@/components/charts";
 import { agentsWithStats } from "@/lib/queries";
-import { setAllAgents } from "../../actions";
+import { setAllAgents, setAllLiveMode } from "../../actions";
+import { ConfirmButton } from "@/components/confirm-button";
 import { AGENT_BY_ID } from "@universe/core";
 
 export default async function Agents() {
@@ -12,6 +13,9 @@ export default async function Agents() {
       <PageHeader title="All Agents" subtitle="Each agent has its own ledger, budget, memory, queue, and permissions.">
         <form action={setAllAgents}><input type="hidden" name="status" value="paused" /><Button tone="danger">Pause all</Button></form>
         <form action={setAllAgents}><input type="hidden" name="status" value="active" /><Button tone="good">Resume all</Button></form>
+        {agents.every((a) => a.live_mode)
+          ? <form action={setAllLiveMode}><input type="hidden" name="live" value="false" /><ConfirmButton message="Switch every agent back to sandbox (simulated actions only)?">Sandbox all</ConfirmButton></form>
+          : <form action={setAllLiveMode}><input type="hidden" name="live" value="true" /><ConfirmButton tone="primary" message="Put every agent in live mode? Approved actions will use real integrations (Shopify for the store). Spending money, publishing and contacting people still need your approval.">Live all</ConfirmButton></form>}
       </PageHeader>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {agents.map((a) => (

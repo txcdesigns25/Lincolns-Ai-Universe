@@ -55,7 +55,8 @@ export async function setLiveMode(form: FormData) {
   const by = await requireOwner();
   const id = String(form.get("agent_id"));
   const live = form.get("live") === "true";
-  if (live && form.get("confirm") !== "LIVE") throw new Error("Type LIVE to confirm");
+  // No typed confirmation per agent: the owner is signed in and it is reversible.
+  // (A throw here rendered as a full-page "Application error".)
   await db().query(`UPDATE agents SET live_mode = $2, updated_at = now() WHERE id = $1`, [id, live]);
   await audit(db(), { actor: by, agentId: id, action: `agent.live_mode.${live ? "on" : "off"}`, outcome: "info" });
   revalidatePath("/", "layout");
@@ -155,5 +156,15 @@ export async function retryTask(form: FormData) {
   const by = await requireOwner();
   await db().query(`UPDATE tasks SET status = 'queued', attempts = 0, run_at = now(), last_error = NULL WHERE id = $1 AND status IN ('dead','failed')`, [String(form.get("task_id"))]);
   await audit(db(), { actor: by, action: "task.retry", outcome: "info", details: { id: form.get("task_id") } });
+  revalidatePath("/", "layout");
+}
+
+/** Owner-only: switch every agent to live or sandbox at once. Approvals still apply. */
+export async function setAllLiveMode(form: FormData) {
+  const by = await requireOwner();
+  const live = form.get("live") === "true";
+  // Confirmed in the browser before submit. Never throw from an action: it renders a full-page error.
+  await db().query(`UPDATE agents SET live_mode = $1, updated_at = now()`, [live]);
+  await audit(db(), { actor: by, action: `agents.live_mode.all_${live ? "on" : "off"}`, outcome: "info" });
   revalidatePath("/", "layout");
 }
