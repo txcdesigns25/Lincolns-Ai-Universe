@@ -38,7 +38,7 @@ See [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md).
 3. **API Keys → Create Key**, copy it once, and paste it as `ANTHROPIC_API_KEY` on the worker.
 
 ## Telegram commands
-`/status` · `/ask <agent> <message>` (plain text goes to the CEO) · `/pause <agent|all>` · `/resume <agent|all>` · `/approvals` · `/approve <id>` · `/reject <id>` · `/stop <reason>`.
+`/status` · `/ask <agent> <message>` (plain text goes to the CEO) · `/pause <agent|all>` · `/resume <agent|all>` · `/approvals` · `/approve <id>` · `/reject <id>` · `/boost <agent> on|off` · `/stop <reason>`.
 Agents: `ceo, store, web, content, seo, support, marketing, automation`. Money and legal approvals, budgets, live mode and releasing the emergency stop are dashboard-only.
 
 ## Layout

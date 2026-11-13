@@ -13,7 +13,7 @@
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
-  getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
+  tiersFromEnv, getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
   extendLease, runTask, tickScheduler, processInboundEvents, PolicyDenied, RetryableError, AwaitingApproval, notify, audit,
   telegramConfigured, pollTelegramOnce, telegramSend, initTelegram,
 } from "@universe/core";
@@ -61,7 +61,7 @@ async function runOne(): Promise<boolean> {
       // Blocked by a control (paused, emergency stop, limit). Not retried.
       await failTask(db, task.id, workerId, `${err.code}: ${err.message}`, { retryable: false });
       log(`blocked ${task.id}: ${err.code}`);
-      if (["daily_limit", "monthly_limit", "global_monthly_limit", "starting_budget", "ai_monthly_limit"].includes(err.code)) {
+      if (["daily_limit", "monthly_limit", "global_monthly_limit", "global_daily_limit", "starting_budget", "ai_monthly_limit"].includes(err.code)) {
         await notify(db, { severity: "warning", agentId: task.agent_id, title: `${task.agent_id} hit a spending limit (${err.code})`,
           body: err.message, dedupeKey: `limit:${task.agent_id}:${err.code}:${new Date().toISOString().slice(0, 10)}` });
       }
@@ -98,11 +98,11 @@ async function loop(slot: number) {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  log(`starting (llm=${llm.provider}:${llm.model}, concurrency=${CONCURRENCY})`);
+  log(`starting (llm=${llm.provider}:${llm.model}, important=${tiersFromEnv().important.model}, concurrency=${CONCURRENCY})`);
   if (llm.provider === "mock") log("No ANTHROPIC_API_KEY set: agents use the free mock LLM (sandbox output only).");
   // Publish what this worker can do, so the dashboard (a separate service) can show it.
   await db.query(`INSERT INTO kv_store (key, value) VALUES ('worker_config', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
-    [JSON.stringify({ llm: llm.provider, model: llm.model, telegram: telegramConfigured(), shopify: !!(process.env.SHOPIFY_STORE_DOMAIN && process.env.SHOPIFY_ADMIN_TOKEN), notifyWebhook: !!process.env.NOTIFY_WEBHOOK_URL })]);
+    [JSON.stringify({ llm: llm.provider, model: llm.model, modelImportant: llm.provider === "mock" ? "mock" : tiersFromEnv().important.model, telegram: telegramConfigured(), shopify: !!(process.env.SHOPIFY_STORE_DOMAIN && process.env.SHOPIFY_ADMIN_TOKEN), notifyWebhook: !!process.env.NOTIFY_WEBHOOK_URL })]);
   await audit(db, { actor: workerId, action: "worker.start", outcome: "info", details: { llm: llm.provider, model: llm.model } });
   const hk = setInterval(() => housekeeping().catch((e) => log(`housekeeping error: ${e.message}`)), 30_000);
   await housekeeping();

@@ -38,6 +38,7 @@ const HELP = `AI Universe commands:
 /pause <agent|all>   /resume <agent|all>
 /approvals – list pending requests
 /approve <id>   /reject <id>  (money/legal approvals: dashboard only)
+/boost <agent> on|off – use the stronger model for an important project
 /stop <reason> – emergency stop (release it from the dashboard)
 Agents: ceo, store, web, content, seo, support, marketing, automation`;
 
@@ -55,7 +56,7 @@ export async function handleTelegramUpdate(db: Db, update: any, send: Send, owne
   const text: string = msg.text.trim();
   const [cmdRaw, ...rest] = text.split(/\s+/);
   // Accept commands with or without the slash ("status" works like "/status").
-  const BARE = new Set(["status", "help", "start", "agents", "approvals", "pause", "resume", "approve", "reject", "stop", "ask", "commands"]);
+  const BARE = new Set(["status", "help", "start", "agents", "approvals", "pause", "resume", "approve", "reject", "stop", "ask", "boost", "commands"]);
   const first = cmdRaw.toLowerCase().replace(/^\//, "").split("@")[0];
   const cmd = cmdRaw.startsWith("/") || BARE.has(first) ? (first === "commands" ? "help" : first) : "";
   const arg = rest.join(" ");
@@ -75,6 +76,14 @@ export async function handleTelegramUpdate(db: Db, update: any, send: Send, owne
       if (!id) return send(chatId, `Which agent? e.g. /${cmd} seo`);
       await db.query(`UPDATE agents SET status = $2, updated_at = now() WHERE id = $1`, [id, status]);
       return send(chatId, `${AGENT_BY_ID[id].name} ${status}.`);
+    }
+    case "boost": {
+      const id = resolveAgent(rest[0]);
+      const on = rest[1]?.toLowerCase();
+      if (!id || (on !== "on" && on !== "off")) return send(chatId, "Usage: /boost store on   (or off). Boosted agents use the stronger model, still within all budget caps.");
+      await db.query(`UPDATE agents SET boost = $2, updated_at = now() WHERE id = $1`, [id, on === "on"]);
+      await audit(db, { actor: "owner:telegram", agentId: id, action: `agent.boost.${on}`, outcome: "info" });
+      return send(chatId, `${AGENT_BY_ID[id].name}: boost ${on}. ${on === "on" ? "It now uses the stronger model." : "Back to the cheap model."}`);
     }
     case "approvals": {
       const rows = (await db.query(`SELECT id, agent_id, action, summary, amount_cents FROM approvals WHERE status = 'pending' ORDER BY created_at LIMIT 15`)).rows;

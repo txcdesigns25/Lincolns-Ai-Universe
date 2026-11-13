@@ -33,6 +33,8 @@ In **web → Variables**, add:
 | `TELEGRAM_BOT_TOKEN` | from @BotFather |
 | `TELEGRAM_OWNER_ID` | your numeric id from @userinfobot |
 
+Model settings are optional. By default routine work uses `claude-haiku-5-5` and important work (boosted agents, inbound customer leads) uses `claude-sonnet-5-5`. Override with `CLAUDE_MODEL` and `CLAUDE_MODEL_IMPORTANT`. If you previously set `CLAUDE_MODEL=claude-opus-5-5`, delete it.
+
 Both services run database migrations on start (safe to repeat; a lock prevents clashes). The first log line shows `[start] role=web` or `[start] role=worker`, so you can check each service is doing the right job.
 
 ## 4. First login
@@ -43,7 +45,7 @@ Both services run database migrations on start (safe to repeat; a lock prevents 
 
 ## Costs
 - Railway: about $5–20/month for web + worker + Postgres. Set a usage limit in Railway billing. This is separate from the agents' cap.
-- Agents: hard-capped at $50/month total (change on **Budgets**).
+- Agents: hard-capped at $1.50/day and $50/month total (change on **Budgets**). Cheap model by default; boost an agent (agent page or Telegram `/boost store on`) only for important projects.
 
 ## Updating
 Every push to `main` redeploys both services automatically.

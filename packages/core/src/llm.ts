@@ -23,13 +23,44 @@ export interface LlmRequest {
   system: string;
   messages: MessageParam[];
   tools: ToolDef[];
+  /** "important" uses the stronger model; everything else uses the cheap one. */
+  tier?: Tier;
 }
+
+export type Tier = "routine" | "important";
+
+export interface TierConfig { model: string; maxTokens: number; effort: "low" | "medium" | "high" }
 
 export interface LlmClient {
   readonly provider: "anthropic" | "mock";
+  /** The routine (default) model, shown on the dashboard. */
   readonly model: string;
   readonly maxTokens: number;
+  tierConfig(tier: Tier): TierConfig;
   create(req: LlmRequest): Promise<LlmResponse>;
+}
+
+/**
+ * Cheap by default. Routine work runs on Haiku with low effort. The stronger
+ * model is used only for tasks the engine marks important (owner-boosted
+ * agents, real inbound customers). Both are configurable on the worker:
+ *   CLAUDE_MODEL / CLAUDE_MAX_TOKENS / CLAUDE_EFFORT                       (routine)
+ *   CLAUDE_MODEL_IMPORTANT / CLAUDE_MAX_TOKENS_IMPORTANT / CLAUDE_EFFORT_IMPORTANT
+ */
+export function tiersFromEnv(env = process.env): Record<Tier, TierConfig> {
+  const effort = (v: string | undefined, d: TierConfig["effort"]) => (["low", "medium", "high"].includes(v ?? "") ? v as TierConfig["effort"] : d);
+  return {
+    routine: {
+      model: env.CLAUDE_MODEL?.trim() || "claude-haiku-5-5",
+      maxTokens: Number(env.CLAUDE_MAX_TOKENS ?? 3000),
+      effort: effort(env.CLAUDE_EFFORT, "low"),
+    },
+    important: {
+      model: env.CLAUDE_MODEL_IMPORTANT?.trim() || "claude-sonnet-5-5",
+      maxTokens: Number(env.CLAUDE_MAX_TOKENS_IMPORTANT ?? 6000),
+      effort: effort(env.CLAUDE_EFFORT_IMPORTANT, "medium"),
+    },
+  };
 }
 
 /** USD per million tokens. Keep in sync with Anthropic's published pricing. */
@@ -67,30 +98,33 @@ export function estimateMaxCostCents(model: string, maxTokens: number, req: LlmR
 export class ClaudeClient implements LlmClient {
   readonly provider = "anthropic" as const;
   private client: Anthropic;
-  constructor(
-    readonly model = process.env.CLAUDE_MODEL ?? "claude-opus-5-5",
-    readonly maxTokens = Number(process.env.CLAUDE_MAX_TOKENS ?? 8000),
-    private effort: "low" | "medium" | "high" = (process.env.CLAUDE_EFFORT as any) ?? "medium",
-  ) {
+  readonly model: string;
+  readonly maxTokens: number;
+  constructor(private tiers: Record<Tier, TierConfig> = tiersFromEnv()) {
+    this.model = tiers.routine.model;
+    this.maxTokens = tiers.routine.maxTokens;
     // Reads ANTHROPIC_API_KEY from the server environment. Never sent to browsers.
     this.client = new Anthropic({ maxRetries: 2 });
   }
 
+  tierConfig(tier: Tier): TierConfig { return this.tiers[tier] ?? this.tiers.routine; }
+
   async create(req: LlmRequest): Promise<LlmResponse> {
+    const t = this.tierConfig(req.tier ?? "routine");
+    // Haiku has no server-side fallback; only send it for models that do.
+    const fallback = /opus|sonnet/.test(t.model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {};
     try {
       const res = await this.client.beta.messages.create({
-        model: this.model,
-        max_tokens: this.maxTokens,
+        model: t.model,
+        max_tokens: t.maxTokens,
         system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
         messages: req.messages,
         tools: req.tools,
         thinking: { type: "adaptive" },
-        output_config: { effort: this.effort },
-        // Server-side fallback if the primary model declines a request.
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
+        output_config: { effort: t.effort },
+        ...fallback,
       });
-      return { content: res.content, stop_reason: res.stop_reason, usage: res.usage, model: res.model ?? this.model };
+      return { content: res.content, stop_reason: res.stop_reason, usage: res.usage, model: res.model ?? t.model };
     } catch (err) {
       if (err instanceof Anthropic.RateLimitError) throw new RetryableError(`Claude rate limited: ${err.message}`, 60_000);
       if (err instanceof Anthropic.InternalServerError) throw new RetryableError(`Claude server error: ${err.message}`);
@@ -109,6 +143,7 @@ export class MockLlm implements LlmClient {
   readonly model = "mock";
   readonly maxTokens = 1000;
   calls: LlmRequest[] = [];
+  tierConfig(_tier: Tier): TierConfig { return { model: "mock", maxTokens: 1000, effort: "low" }; }
   constructor(private script: (req: LlmRequest, callIndex: number) => Partial<LlmResponse> = defaultMockScript) {}
   async create(req: LlmRequest): Promise<LlmResponse> {
     const i = this.calls.length;

@@ -42,6 +42,23 @@ export async function globalMonthSpend(q: Queryable): Promise<number> {
   return Number(rows[0].total);
 }
 
+/** AI spend across all agents today. The global daily cap applies to AI only, so
+ *  an owner-approved purchase is never blocked by it. */
+export async function globalDaySpend(q: Queryable): Promise<number> {
+  const { rows } = await q.query(
+    `SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_cents ELSE amount_cents END), 0) AS total
+       FROM spend_authorizations WHERE status IN ('reserved','settled') AND category = 'ai_api' AND created_at >= date_trunc('day', now())`);
+  return Number(rows[0].total);
+}
+
+/** Owner-only: change the daily cap across all agents. */
+export async function setGlobalDailyLimit(db: Db, cents: number, by: string) {
+  if (by !== "owner") throw new PolicyDenied("owner_only", "Only the owner can change the global limit");
+  if (!Number.isInteger(cents) || cents < 0) throw new PolicyDenied("invalid_limit", "Limit must be non-negative cents");
+  await db.query(`UPDATE system_controls SET global_daily_limit = $1, updated_at = now() WHERE id`, [cents]);
+  await audit(db, { actor: by, action: "budget.global_daily_update", outcome: "info", details: { cents } });
+}
+
 /** Owner-only: change the cap across all agents. */
 export async function setGlobalMonthlyLimit(db: Db, cents: number, by: string) {
   if (by !== "owner") throw new PolicyDenied("owner_only", "Only the owner can change the global limit");
@@ -96,7 +113,7 @@ export async function authorizeSpend(db: Db, req: AuthorizeRequest): Promise<str
 
     // Lock the global controls row first (serializes spend across ALL agents so
     // the global cap holds under concurrency), then the agent's budget row.
-    const controls = (await tx.query(`SELECT emergency_stop, global_monthly_limit FROM system_controls WHERE id FOR UPDATE`)).rows[0];
+    const controls = (await tx.query(`SELECT emergency_stop, global_monthly_limit, global_daily_limit FROM system_controls WHERE id FOR UPDATE`)).rows[0];
     const b = await tx.query(`SELECT * FROM agent_budgets WHERE agent_id = $1 FOR UPDATE`, [req.agentId]);
     const limits = b.rows[0] as BudgetLimits | undefined;
 
@@ -141,6 +158,7 @@ export async function authorizeSpend(db: Db, req: AuthorizeRequest): Promise<str
     ];
     if (req.category === "ai_api") checks.push(["ai_monthly_limit", s.aiMonth, limits.ai_monthly_limit]);
     if (req.category === "advertising") checks.push(["ads_monthly_limit", s.adsMonth, limits.ads_monthly_limit]);
+    if (req.category === "ai_api") checks.push(["global_daily_limit", await globalDaySpend(tx), controls.global_daily_limit]);
     checks.push(["global_monthly_limit", await globalMonthSpend(tx), controls.global_monthly_limit]);
     for (const [name, used, limit] of checks) {
       if (used + req.amountCents > limit) return deny(name, `would reach ${used + req.amountCents} of ${limit}`);

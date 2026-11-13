@@ -13,7 +13,7 @@ export default async function Settings() {
     q.query(`SELECT value FROM kv_store WHERE key = 'worker_config'`).then((r) => r.rows[0]?.value ?? {}),
   ]);
   // Worker-side settings are reported by the worker itself (it is a separate service).
-  const llm = wc.llm === "anthropic" ? `Claude · ${wc.model}` : wc.llm === "mock" ? "Mock (free, sandbox output)" : "Unknown (worker has not started)";
+  const llm = wc.llm === "anthropic" ? `Claude · ${wc.model} (routine)${wc.modelImportant ? ` · ${wc.modelImportant} (important)` : ""}` : wc.llm === "mock" ? "Mock (free, sandbox output)" : "Unknown (worker has not started)";
   const env = [
     ["Claude API (worker)", wc.llm === "anthropic", "ANTHROPIC_API_KEY"],
     ["Telegram bot (worker)", !!wc.telegram, "TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_ID"],

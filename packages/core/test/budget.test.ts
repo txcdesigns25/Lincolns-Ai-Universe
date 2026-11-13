@@ -9,6 +9,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM spend_authorizations WHERE NOT EXISTS (SELECT 1 FROM ledger_entries l WHERE l.spend_authorization_id = spend_authorizations.id)`);
   await releaseEmergencyStop(db, "owner");
   await setGlobalMonthlyLimit(db, 5000, "owner");
+  await db.query(`UPDATE system_controls SET global_daily_limit = 1000000`); // tested separately in cost.test.ts
   await db.query(`UPDATE agents SET status = 'active'`);
 });
 

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "./db.js";
 import { withTx } from "./db.js";
-import type { LlmClient, MessageParam } from "./llm.js";
+import type { LlmClient, MessageParam, Tier } from "./llm.js";
 import { estimateMaxCostCents, costCents } from "./llm.js";
 import { authorizeSpend, settleSpend, releaseSpend, setBudget } from "./budget.js";
 import { authorizeAction } from "./approvals.js";
@@ -86,8 +86,24 @@ function callKey(taskId: string, tool: string, input: unknown) {
   return createHash("sha256").update(`${taskId}|${tool}|${JSON.stringify(input)}`).digest("hex");
 }
 
+/**
+ * Which model tier a task gets. Decided by code, never by the agent, so an
+ * agent cannot escalate itself. Important = the owner boosted this agent,
+ * the owner flagged this task, or a real customer is waiting (inbound lead).
+ * Escalated calls still go through every budget cap.
+ */
+export async function tierForTask(db: Db, task: TaskRow): Promise<Tier> {
+  const agent = (await db.query(`SELECT boost FROM agents WHERE id = $1`, [task.agent_id])).rows[0];
+  if (agent?.boost) return "important";
+  if (task.type === "inbound_lead") return "important";
+  if ((task.payload as any)?.important === true && task.created_by === "owner") return "important";
+  return "routine";
+}
+
 async function runAgentTask({ db, llm, workerId }: EngineDeps, task: TaskRow) {
   await assertAgentMayAct(db, task.agent_id);
+  const tier = await tierForTask(db, task);
+  const tc = llm.tierConfig(tier);
   const def = AGENT_BY_ID[task.agent_id];
   if (!def) throw new PolicyDenied("unknown_agent", task.agent_id);
   const tools = toolDefsFor(def.tools);
@@ -99,12 +115,12 @@ async function runAgentTask({ db, llm, workerId }: EngineDeps, task: TaskRow) {
   let stop: string | null = null;
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const req = { system, messages, tools };
+    const req = { system, messages, tools, tier };
     // 1. Reserve budget for the worst case BEFORE calling the model.
-    const reserve = llm.provider === "mock" ? 1 : estimateMaxCostCents(llm.model, llm.maxTokens, req);
+    const reserve = llm.provider === "mock" ? 1 : estimateMaxCostCents(tc.model, tc.maxTokens, req);
     const authId = await authorizeSpend(db, {
       agentId: task.agent_id, category: "ai_api", amountCents: reserve, taskId: task.id,
-      reason: `${llm.model} call for task ${task.type}`, idempotencyKey: `llm:${task.id}:${task.attempts}:${turn}`,
+      reason: `${tc.model} (${tier}) call for task ${task.type}`, idempotencyKey: `llm:${task.id}:${task.attempts}:${turn}`,
     });
     let res;
     try {
@@ -156,8 +172,8 @@ async function runAgentTask({ db, llm, workerId }: EngineDeps, task: TaskRow) {
   await db.query(`UPDATE tasks SET cost_cents = cost_cents + $2 WHERE id = $1`, [task.id, Math.ceil(totalCost)]);
   await db.query(`UPDATE agent_messages SET read_at = now() WHERE to_agent_id = $1 AND read_at IS NULL`, [task.agent_id]);
   await audit(db, { actor: workerId, agentId: task.agent_id, action: `task.${task.type}`, outcome: "info",
-    details: { stop_reason: stop, tools: toolLog.length, cost_cents: Math.ceil(totalCost) }, taskId: task.id });
-  return { summary: finalText.slice(0, 4000), stop_reason: stop, tool_calls: toolLog, cost_cents: Math.ceil(totalCost), model: llm.model };
+    details: { stop_reason: stop, tools: toolLog.length, cost_cents: Math.ceil(totalCost), model: tc.model, tier }, taskId: task.id });
+  return { summary: finalText.slice(0, 4000), stop_reason: stop, tool_calls: toolLog, cost_cents: Math.ceil(totalCost), model: tc.model, tier };
 }
 
 // ───────────────────────── Deterministic executors ─────────────────────────

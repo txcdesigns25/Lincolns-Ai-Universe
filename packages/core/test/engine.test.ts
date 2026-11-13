@@ -147,7 +147,8 @@ describe("agent engine with mocked Claude", () => {
   });
 
   it("LLM outages surface as retryable and release the budget reservation", async () => {
-    const llm = { provider: "anthropic" as const, model: "claude-opus-5-5", maxTokens: 1000, create: async () => { throw new RetryableError("503"); } };
+    const llm = { provider: "anthropic" as const, model: "claude-opus-5-5", maxTokens: 1000,
+      tierConfig: () => ({ model: "claude-opus-5-5", maxTokens: 1000, effort: "low" as const }), create: async () => { throw new RetryableError("503"); } };
     await enqueue(db, { agentId: "seo_agency", type: "directive", title: "outage" });
     const task = (await claimNext(db, "w"))!;
     await expect(runTask({ db, llm, workerId: "w" }, task)).rejects.toBeInstanceOf(RetryableError);
@@ -160,6 +161,7 @@ describe("agent engine with mocked Claude", () => {
 
   it("real-model costs are reserved up front and settled into the ledger", async () => {
     const llm = { provider: "anthropic" as const, model: "claude-opus-5-5", maxTokens: 1000,
+      tierConfig: () => ({ model: "claude-opus-5-5", maxTokens: 1000, effort: "low" as const }),
       create: async () => ({ content: [text("done")] as any, stop_reason: "end_turn", usage: { input_tokens: 2_000, output_tokens: 800 }, model: "claude-opus-5-5" }) };
     await enqueue(db, { agentId: "seo_agency", type: "directive", title: "costed" });
     const task = (await claimNext(db, "w"))!;

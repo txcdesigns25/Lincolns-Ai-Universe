@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { Card, PageHeader, Stat, Table, Badge, Button, Money } from "@/components/ui";
 import { Meter } from "@/components/charts";
 import { usd, ago } from "@/lib/format";
-import { setAgentStatus, runAgentNow, setLiveMode, togglePermission, decide } from "../../../actions";
+import { setAgentStatus, runAgentNow, setLiveMode, setBoost, togglePermission, decide } from "../../../actions";
 import { BudgetForm } from "@/components/budget-form";
 
 export default async function AgentPage({ params }: { params: Promise<{ id: string }> }) {
@@ -113,6 +113,14 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
               </li>
             ))}
           </ul>
+          <div className="mt-5 border-t border-line pt-4">
+            <h3 className="text-sm font-medium">Model: {agent.boost ? "Boosted (stronger model)" : "Cheap (default)"}</h3>
+            <p className="mt-1 text-xs text-muted">Agents run on the cheap model by default. Boost an agent when it is on an important project; it then uses the stronger model, still within every budget cap. Inbound customer leads always use the stronger model.</p>
+            <form action={setBoost} className="mt-2">
+              <input type="hidden" name="agent_id" value={id} /><input type="hidden" name="boost" value={agent.boost ? "false" : "true"} />
+              <Button tone={agent.boost ? "good" : "default"}>{agent.boost ? "Turn boost off" : "Boost this agent"}</Button>
+            </form>
+          </div>
           <div className="mt-5 border-t border-line pt-4">
             <h3 className="text-sm font-medium">Live mode</h3>
             <p className="mt-1 text-xs text-muted">Off: approved external actions are simulated. On: approved actions use real integrations (when credentials exist).</p>

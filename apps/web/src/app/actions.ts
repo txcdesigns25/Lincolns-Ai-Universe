@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import {
-  decideApproval, engageEmergencyStop, releaseEmergencyStop, setBudget, setGlobalMonthlyLimit, grantPermission,
+  decideApproval, engageEmergencyStop, releaseEmergencyStop, setBudget, setGlobalMonthlyLimit, setGlobalDailyLimit, grantPermission,
   activateConfigVersion, rejectConfigVersion, enqueue, audit, ACTIONS,
 } from "@universe/core";
 import { db } from "@/lib/db";
@@ -85,6 +85,17 @@ export async function updateBudget(form: FormData) {
 export async function updateGlobalLimit(form: FormData) {
   const by = await requireOwner();
   await setGlobalMonthlyLimit(db(), cents(form.get("global_monthly_limit")), by);
+  if (form.get("global_daily_limit") != null) await setGlobalDailyLimit(db(), cents(form.get("global_daily_limit")), by);
+  revalidatePath("/", "layout");
+}
+
+/** Boost: this agent is on an important project, so it uses the stronger model (still within all caps). */
+export async function setBoost(form: FormData) {
+  const by = await requireOwner();
+  const id = String(form.get("agent_id"));
+  const boost = form.get("boost") === "true";
+  await db().query(`UPDATE agents SET boost = $2, updated_at = now() WHERE id = $1`, [id, boost]);
+  await audit(db(), { actor: by, agentId: id, action: `agent.boost.${boost ? "on" : "off"}`, outcome: "info" });
   revalidatePath("/", "layout");
 }
 
