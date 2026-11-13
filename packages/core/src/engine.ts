@@ -39,7 +39,8 @@ const HARD_RULES = `Operating rules (enforced by the platform; you cannot change
 - Never invent revenue, results, customers, or data. Distinguish observations, hypotheses, and verified results.
 - Follow platform rules, anti-spam and privacy law. No scraping private data, no bulk unsolicited messages, no impersonating humans, no fake reviews, no manipulative SEO.
 - Prefer sustainable revenue, customer satisfaction, and verified net profit over vanity metrics.
-- Every model call costs money from the shared budget. Do useful work, then stop. Do not chat.`;
+- Every model call costs money from the shared budget. Do useful work, then stop. Do not chat.
+- You CAN reach the owner on Telegram: when a task came from the owner's chat, your final message is delivered to them as your reply. Approval requests, alerts and the daily summary are pushed to them automatically. Use tell_owner_blocked only when you are blocked on something only they can provide.`;
 
 const TASK_PROMPTS: Record<string, string> = {
   growth_cycle: `Run one autonomous growth cycle: RESEARCH -> PLAN -> EXECUTE -> MEASURE -> LEARN -> OPTIMIZE.

@@ -82,11 +82,17 @@ export async function authorizeAction(db: Db, p: { agentId: string; action: stri
     try {
       // sandbox=true means the caller will only use a simulated adapter, so live mode is not required.
       await assertAgentMayAct(tx, p.agentId, { external: spec.external && !p.sandbox });
+      // Level 2 runs if the owner pre-authorized the action for this agent, OR
+      // approved this specific request (a one-off approval is at least as strong).
+      let needsApproval = spec.level === 3;
       if (spec.level === 2) {
         const perm = await tx.query(`SELECT 1 FROM agent_permissions WHERE agent_id = $1 AND action = $2`, [p.agentId, p.action]);
-        if (!perm.rowCount) throw new PolicyDenied("not_preauthorized", `${p.action} is not preauthorized for ${p.agentId}`);
+        if (!perm.rowCount) {
+          if (!p.approvalId) throw new PolicyDenied("not_preauthorized", `${p.action} is not preauthorized for ${p.agentId}`);
+          needsApproval = true;
+        }
       }
-      if (spec.level === 3) {
+      if (needsApproval) {
         if (!p.approvalId) throw new PolicyDenied("approval_required", `${p.action} requires human approval`);
         const a = (await tx.query(`SELECT * FROM approvals WHERE id = $1 FOR UPDATE`, [p.approvalId])).rows[0];
         if (!a || a.agent_id !== p.agentId || a.action !== p.action)

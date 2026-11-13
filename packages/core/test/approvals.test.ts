@@ -58,3 +58,19 @@ describe("approval system", () => {
     expect(rows[0].n).toBeGreaterThan(0);
   });
 });
+
+describe("approved Level 2 requests", () => {
+  it("an owner-approved request runs without a standing preauthorization, once", async () => {
+    await db.query(`DELETE FROM agent_permissions WHERE agent_id = 'support_agency' AND action = 'website.update_owned'`);
+    const a = await requestApproval(db, { agentId: "support_agency", action: "website.update_owned", summary: "Publish landing page", idempotencyKey: "l2-approved" });
+    await expect(authorizeAction(db, { agentId: "support_agency", action: "website.update_owned", approvalId: a.id, sandbox: true }))
+      .rejects.toMatchObject({ code: "approval_not_approved" });
+    await db.query(`UPDATE approvals SET status = 'approved', decided_by = 'owner' WHERE id = $1`, [a.id]);
+    await authorizeAction(db, { agentId: "support_agency", action: "website.update_owned", approvalId: a.id, sandbox: true });
+    await expect(authorizeAction(db, { agentId: "support_agency", action: "website.update_owned", approvalId: a.id, sandbox: true }))
+      .rejects.toMatchObject({ code: "approval_consumed" });
+    // Without an approval or preauthorization it is still refused.
+    await expect(authorizeAction(db, { agentId: "support_agency", action: "website.update_owned", sandbox: true }))
+      .rejects.toMatchObject({ code: "not_preauthorized" });
+  });
+});

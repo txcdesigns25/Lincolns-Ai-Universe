@@ -43,7 +43,7 @@ export const AGENTS: AgentDefinition[] = [
       "Recommend improvements to the entire system",
     ],
     successMetric: "Portfolio verified net profit and reliability",
-    tools: ["get_portfolio_report", "assign_task", "recommend_budget_change", "record_memory", "search_memory", "send_agent_message", "create_draft", "review_experiments"],
+    tools: ["get_portfolio_report", "assign_task", "recommend_budget_change", "record_memory", "search_memory", "send_agent_message", "create_draft", "review_experiments", "tell_owner_blocked"],
     schedules: [
       { id: "ceo-daily-summary", taskType: "daily_summary", title: "Daily performance summary", intervalMinutes: 1440 },
       { id: "ceo-weekly-evaluation", taskType: "portfolio_evaluation", title: "Weekly portfolio evaluation", intervalMinutes: 10080 },
