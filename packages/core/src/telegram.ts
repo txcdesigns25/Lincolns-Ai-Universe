@@ -41,13 +41,16 @@ const HELP = `AI Universe commands:
 /stop <reason> – emergency stop (release it from the dashboard)
 Agents: ceo, store, web, content, seo, support, marketing, automation`;
 
-export async function handleTelegramUpdate(db: Db, update: any, send: Send, ownerId = process.env.TELEGRAM_OWNER_ID) {
+export async function handleTelegramUpdate(db: Db, update: any, send: Send, ownerId = process.env.TELEGRAM_OWNER_ID?.trim()) {
   const msg = update?.message;
   if (!msg?.text || !msg.from) return;
   const chatId: number = msg.chat.id;
   if (!ownerId || String(msg.from.id) !== String(ownerId) || msg.chat.type !== "private") {
     await audit(db, { actor: `telegram:${msg.from.id}`, action: "telegram.message", outcome: "denied", details: { reason: "not owner" } });
-    return; // silently ignore strangers
+    // Tell the sender their id so a mistyped TELEGRAM_OWNER_ID is easy to fix. Grants nothing.
+    if (msg.chat.type === "private")
+      await send(chatId, `Not authorized. Your Telegram user id is ${msg.from.id}. If this is your bot, set TELEGRAM_OWNER_ID=${msg.from.id} on the worker.`);
+    return;
   }
   const text: string = msg.text.trim();
   const [cmdRaw, ...rest] = text.split(/\s+/);
@@ -152,11 +155,25 @@ export async function notifyOwnerTelegram(text: string) {
   await telegramSend(Number(process.env.TELEGRAM_OWNER_ID), text);
 }
 
+/**
+ * Called once at worker start: verifies the token, removes any webhook (a set
+ * webhook makes getUpdates fail), and returns the bot's username for the logs.
+ */
+export async function initTelegram(): Promise<string> {
+  const token = process.env.TELEGRAM_BOT_TOKEN!.trim();
+  const me: any = await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json();
+  if (!me.ok) throw new Error(`Telegram token rejected: ${me.description} (check TELEGRAM_BOT_TOKEN on the worker)`);
+  await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`);
+  if (!/^\d+$/.test(String(process.env.TELEGRAM_OWNER_ID ?? "").trim()))
+    throw new Error("TELEGRAM_OWNER_ID must be your numeric user id (from @userinfobot), not a username");
+  return me.result.username;
+}
+
 /** One long-poll round. Offset is stored in Postgres so restarts don't replay commands. */
 export async function pollTelegramOnce(db: Db, timeoutSec = 25) {
   const token = process.env.TELEGRAM_BOT_TOKEN!;
   const offset = (await db.query(`SELECT value FROM kv_store WHERE key = 'telegram_offset'`)).rows[0]?.value ?? 0;
-  const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?timeout=${timeoutSec}&offset=${offset}&allowed_updates=["message"]`);
+  const res = await fetch(`https://api.telegram.org/bot${token.trim()}/getUpdates?timeout=${timeoutSec}&offset=${offset}&allowed_updates=${encodeURIComponent('["message"]')}`);
   const json: any = await res.json();
   if (!json.ok) throw new Error(`Telegram getUpdates failed: ${json.description}`);
   for (const u of json.result) {

@@ -16,7 +16,9 @@ describe("telegram remote control", () => {
   it("ignores everyone except the owner, and group chats", async () => {
     await handleTelegramUpdate(db, msg("/pause all", "999"), send, OWNER);
     await handleTelegramUpdate(db, msg("/pause all", OWNER, "group"), send, OWNER);
-    expect(sent).toHaveLength(0);
+    expect(sent).toHaveLength(1);                 // stranger told their id, nothing else
+    expect(sent[0]).toMatch(/Not authorized. Your Telegram user id is 999/);
+    sent.length = 0;
     expect((await db.query(`SELECT count(*)::int AS n FROM agents WHERE status = 'paused'`)).rows[0].n).toBe(0);
   });
   it("pauses and resumes agents", async () => {

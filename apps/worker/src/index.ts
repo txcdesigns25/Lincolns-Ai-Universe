@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import {
   getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
   extendLease, runTask, tickScheduler, processInboundEvents, PolicyDenied, RetryableError, AwaitingApproval, notify, audit,
-  telegramConfigured, pollTelegramOnce, telegramSend,
+  telegramConfigured, pollTelegramOnce, telegramSend, initTelegram,
 } from "@universe/core";
 
 const db = getDb();
@@ -107,9 +107,11 @@ async function main() {
   const hk = setInterval(() => housekeeping().catch((e) => log(`housekeeping error: ${e.message}`)), 30_000);
   await housekeeping();
   const loops = Array.from({ length: CONCURRENCY }, (_, i) => loop(i));
-  if (telegramConfigured()) {
-    log("Telegram bot enabled (owner-only)");
+  if (!telegramConfigured()) log("Telegram disabled: TELEGRAM_BOT_TOKEN and/or TELEGRAM_OWNER_ID not set on this service");
+  else {
     loops.push((async () => {
+      try { log(`Telegram bot @${await initTelegram()} enabled (owner-only)`); }
+      catch (e: any) { log(`Telegram NOT started: ${e.message}`); return; }
       while (!stopping) {
         try { await pollTelegramOnce(db, 25); }
         catch (e: any) { log(`telegram error: ${e.message}`); await sleep(10_000); }
