@@ -58,6 +58,13 @@ export async function seed(db: Db) {
         [s.id, a.id, s.taskType, s.title, s.intervalMinutes, String(offsetMin)]);
     }
   }
+  // One-time grant (owner decision, 2026-11-13): the Digital Product Store may
+  // brand and list on its designated store without per-item approval. Done once
+  // so that if the owner revokes it later, a redeploy does not re-grant it.
+  const granted = await db.query(`INSERT INTO kv_store (key, value) VALUES ('seed_store_publish_grant', '{"granted":true}') ON CONFLICT (key) DO NOTHING RETURNING key`);
+  if (granted.rowCount) {
+    await db.query(`INSERT INTO agent_permissions (agent_id, action, granted_by) VALUES ('digital_store', 'store.publish_owned', 'owner') ON CONFLICT DO NOTHING`);
+  }
   await db.query(
     `INSERT INTO schedules (id, agent_id, task_type, title, interval_minutes) VALUES ('system-health', 'ceo', 'health_check', 'System health check', 60)
      ON CONFLICT (id) DO NOTHING`);

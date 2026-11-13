@@ -12,6 +12,8 @@ export interface AgentDefinition {
   successMetric: string;
   /** Tool names this agent's LLM may call. Enforced by the engine, not the prompt. */
   tools: string[];
+  /** Extra operating instructions for this agent, added to its system prompt. */
+  guidance?: string;
   /** Recurring work. Kept infrequent: 24/7 availability != constant inference. */
   schedules: { id: string; taskType: string; title: string; intervalMinutes: number }[];
 }
@@ -21,6 +23,14 @@ const COMMON_TOOLS = [
   "propose_experiment", "review_experiments", "conclude_experiment", "record_experiment_lesson",
   "request_approval", "propose_strategy_update", "get_own_financials", "list_own_customers", "schedule_follow_up", "tell_owner_blocked",
 ];
+
+const DIGITAL_STORE_GUIDANCE = `Your store: the owner gave you one Shopify store (formerly "Apex Motorsports", now unused) to rebrand fully and run. You decide the niche, brand, products, and prices yourself; do not ask the owner for ideas. Learn from real sales data and from your own recorded mistakes.
+How to work:
+1. Start every cycle with get_store_status and search_memory. If no brand exists yet, pick ONE focused niche where buyers already pay for spreadsheets or printable planners (a specific audience with a recurring, money- or time-related problem), then call set_store_brand and submit_draft. Record your reasoning as a hypothesis.
+2. Build original products with build_digital_product (excellent, genuinely useful content: real formulas, sensible categories, clear instructions). Then submit_draft. Start with 2-3 products, priced $5-$19, before adding more.
+3. When sales data exists, judge products by verified revenue and refunds. Use change_store_product to improve titles, descriptions, and prices; archive products that fail after a fair run (about 3-4 weeks). Use propose_experiment for price or listing tests and pass experiment_id / experiment_variant when building variants.
+4. After each change, record_memory what you expected; at the next review, record what actually happened (verified_result with evidence, or mistake).
+Boundaries: no spending money (ads, apps, paid tools) without request_approval; no legal or policy pages (refund policy, terms) without approval; no trademarks, copied products, fake reviews, or invented claims. Only this one store exists for you; the platform refuses any other.`;
 
 export const AGENTS: AgentDefinition[] = [
   {
@@ -45,7 +55,8 @@ export const AGENTS: AgentDefinition[] = [
     responsibilities: ["Research demand", "Identify niches", "Analyze competitors and pricing", "Create original digital products",
       "Write descriptions and graphics briefs", "Prepare listings for approval", "Monitor sales and feedback", "Improve products", "Experiment with pricing within approved ranges"],
     successMetric: "Verified net profit after expenses, fees, and refunds",
-    tools: COMMON_TOOLS,
+    tools: [...COMMON_TOOLS, "get_store_status", "set_store_brand", "build_digital_product", "change_store_product"],
+    guidance: DIGITAL_STORE_GUIDANCE,
     schedules: [
       { id: "a01-growth-cycle", taskType: "growth_cycle", title: "Autonomous growth cycle", intervalMinutes: 1440 },
       { id: "a01-review", taskType: "performance_review", title: "Weekly performance review", intervalMinutes: 10080 },

@@ -6,7 +6,7 @@ import { useState } from "react";
 const NAV = [
   ["/", "Overview"], ["/ceo", "Universe CEO"], ["/agents", "All Agents"], ["/revenue", "Revenue"], ["/expenses", "Expenses"],
   ["/budgets", "Budgets"], ["/activity", "Activity Feed"], ["/customers", "Customers"], ["/tasks", "Tasks"],
-  ["/memory", "Memory & Learning"], ["/approvals", "Approvals"], ["/settings", "Settings"],
+  ["/store", "Store (A01)"], ["/memory", "Memory & Learning"], ["/approvals", "Approvals"], ["/settings", "Settings"],
 ] as const;
 
 export function Nav({ pending, workerOnline }: { pending: number; workerOnline: boolean }) {

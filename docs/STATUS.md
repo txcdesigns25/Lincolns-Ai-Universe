@@ -34,10 +34,17 @@ Last updated: 2026-11-13. Nothing here is deployed yet, and no business is gener
 - Stripe webhook against real Stripe events (signature check is tested).
 - 24/7 operation on Railway (config written, not deployed).
 
+## Agent 01 Digital Product Store (built, waiting on Shopify credentials)
+
+- Apex-only store guard (allowlist + live identity check + shop-id pin before every write), tested.
+- Real product files (.xlsx, .pdf) and listing images rendered from agent specs, tested.
+- Autonomous brand/niche choice, listing, price changes, archive (owner's standing grant; live mode required).
+- Order sync every 15 min: verified revenue, refunds, fees into the ledger; automatic download delivery; refund revokes link. Tested against a simulated Shopify.
+- Dashboard Store page. See docs/DIGITAL_STORE.md.
+- Not yet run against the real Apex store (needs the app credentials).
+
 ## Planned next
 
-- **Phase 3, first revenue workflow** (recommended: Digital Product Store on a separate Shopify store). Needs your go-ahead and a store to use.
-- Shopify order sync into the ledger (verified revenue, fees, refunds).
 - Email sending integration for approved outreach and follow-ups (with unsubscribe handling).
 - Web research tool for agents (Claude web search) under the AI budget.
 - Landing-page publishing for agents (owned domain).

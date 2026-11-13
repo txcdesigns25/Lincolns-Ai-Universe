@@ -16,6 +16,7 @@ import {
   tiersFromEnv, releaseStaleReservations, getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
   extendLease, runTask, tickScheduler, processInboundEvents, PolicyDenied, RetryableError, AwaitingApproval, notify, audit,
   telegramConfigured, pollTelegramOnce, telegramSend, initTelegram, pushPendingApprovals, pushTaskUpdate,
+  syncStore, shopifyConfigured, isEmergencyStopped,
 } from "@universe/core";
 
 const db = getDb();
@@ -24,6 +25,8 @@ const workerId = `worker-${hostname()}-${randomUUID().slice(0, 8)}`;
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 2);
 const POLL_MS = Number(process.env.WORKER_POLL_MS ?? 5000);
 const LEASE_SECONDS = 300;
+const STORE_SYNC_MS = Number(process.env.STORE_SYNC_MINUTES ?? 15) * 60_000;
+let lastStoreSync = 0;
 let stopping = false;
 
 const log = (msg: string, extra?: unknown) =>
@@ -43,6 +46,16 @@ async function housekeeping() {
   if (events) log(`processed ${events} inbound event(s)`);
   const pushed = await pushPendingApprovals(db);
   if (pushed) log(`sent ${pushed} approval request(s) to Telegram`);
+  // Store sync (orders -> ledger, download delivery). Deterministic, no AI cost.
+  // Runs even if the agent is paused, so buyers always get their files; the
+  // emergency stop halts it like every other external action.
+  if (shopifyConfigured() && Date.now() - lastStoreSync > STORE_SYNC_MS && !(await isEmergencyStopped(db))) {
+    lastStoreSync = Date.now();
+    try {
+      const r = await syncStore(db);
+      if (r.orders || r.delivered) log(`store sync: ${r.orders} order(s), ${r.delivered} delivered`);
+    } catch (e: any) { log(`store sync error: ${e.message}`); }
+  }
 }
 
 async function runOne(): Promise<boolean> {
@@ -107,7 +120,7 @@ async function main() {
   if (llm.provider === "mock") log("No ANTHROPIC_API_KEY set: agents use the free mock LLM (sandbox output only).");
   // Publish what this worker can do, so the dashboard (a separate service) can show it.
   await db.query(`INSERT INTO kv_store (key, value) VALUES ('worker_config', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
-    [JSON.stringify({ llm: llm.provider, model: llm.model, modelImportant: llm.provider === "mock" ? "mock" : tiersFromEnv().important.model, telegram: telegramConfigured(), shopify: !!(process.env.SHOPIFY_STORE_DOMAIN && process.env.SHOPIFY_ADMIN_TOKEN), notifyWebhook: !!process.env.NOTIFY_WEBHOOK_URL })]);
+    [JSON.stringify({ llm: llm.provider, model: llm.model, modelImportant: llm.provider === "mock" ? "mock" : tiersFromEnv().important.model, telegram: telegramConfigured(), shopify: shopifyConfigured(), shopifyStore: process.env.SHOPIFY_ALLOWED_STORE ?? null, notifyWebhook: !!process.env.NOTIFY_WEBHOOK_URL })]);
   await audit(db, { actor: workerId, action: "worker.start", outcome: "info", details: { llm: llm.provider, model: llm.model } });
   const hk = setInterval(() => housekeeping().catch((e) => log(`housekeeping error: ${e.message}`)), 30_000);
   await housekeeping();
