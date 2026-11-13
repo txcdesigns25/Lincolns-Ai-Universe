@@ -6,6 +6,13 @@ import type { Db } from "./db.js";
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../db/migrations");
 
 export async function migrate(db: Db, log = console.log) {
+  // Advisory lock: web and worker may both start and migrate at the same moment.
+  const lock = await db.connect();
+  await lock.query(`SELECT pg_advisory_lock(727274)`);
+  try { await migrateLocked(db, log); } finally { await lock.query(`SELECT pg_advisory_unlock(727274)`); lock.release(); }
+}
+
+async function migrateLocked(db: Db, log: (m: string) => void) {
   await db.query(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   const done = new Set((await db.query(`SELECT name FROM schema_migrations`)).rows.map((r) => r.name));
   for (const f of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort()) {

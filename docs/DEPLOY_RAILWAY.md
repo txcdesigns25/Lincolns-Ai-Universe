@@ -7,14 +7,14 @@ This runs AI Universe in the cloud so it keeps working with your computer off. Y
 2. In the project canvas click **+ Create → Database → PostgreSQL**.
 
 ## 2. Configure the web service
-In **web → Settings**:
-- **Config-as-code / Railway config file**: `railway.web.json`
-- **Networking → Generate Domain** (this is your dashboard URL)
+In **web → Settings → Networking → Generate Domain**, use port `3000` (this is your dashboard URL). No config-file path is needed; both services use the same `Dockerfile` and `SERVICE_ROLE` decides what runs.
 
 In **web → Variables**, add:
 
 | Variable | Value |
 |---|---|
+| `SERVICE_ROLE` | `web` |
+| `PORT` | `3000` |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (reference variable) |
 | `OWNER_PASSWORD` | a long password you'll use to log in |
 | `SESSION_SECRET` | any random string, 32+ characters |
@@ -22,17 +22,18 @@ In **web → Variables**, add:
 
 ## 3. Add the worker service
 1. **+ Create → GitHub Repo →** the same repo again. Rename it to **worker**.
-2. **worker → Settings → Railway config file**: `railway.worker.json`. Do not generate a domain. Keep **1 replica**.
+2. Do not generate a domain for it. Keep **1 replica**.
 3. **worker → Variables**:
 
 | Variable | Value |
 |---|---|
+| `SERVICE_ROLE` | `worker` |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
 | `ANTHROPIC_API_KEY` | your key (leave empty to run the free mock) |
 | `TELEGRAM_BOT_TOKEN` | from @BotFather |
 | `TELEGRAM_OWNER_ID` | your numeric id from @userinfobot |
 
-The worker runs database migrations and seeds the agents each time it starts (safe to repeat).
+Both services run database migrations on start (safe to repeat; a lock prevents clashes). The first log line shows `[start] role=web` or `[start] role=worker`, so you can check each service is doing the right job.
 
 ## 4. First login
 1. Open the web domain, sign in with `OWNER_PASSWORD`.

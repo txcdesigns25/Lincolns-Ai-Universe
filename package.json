@@ -9,7 +9,7 @@
     "build": "pnpm --filter @universe/web build",
     "test": "pnpm --filter @universe/core test",
     "typecheck": "pnpm -r typecheck",
-    "start:web": "pnpm --filter @universe/web start",
+    "start:web": "pnpm db:migrate && pnpm --filter @universe/web start",
     "start:worker": "pnpm --filter @universe/worker start:prod"
   }
 }
