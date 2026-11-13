@@ -139,9 +139,9 @@ export async function handleTelegramUpdate(db: Db, update: any, send: Send, owne
 }
 
 /** Recent Telegram conversation between the owner and one agent, oldest first. */
-export async function chatHistory(db: Db, agentId: string, chatId: number, limit = 8) {
+export async function chatHistory(db: Db, agentId: string, chatId: number, limit = agentId === "ceo" ? 20 : 8) {
   const rows = (await db.query(
-    `SELECT direction, text FROM telegram_messages WHERE agent_id = $1 AND chat_id = $2 AND created_at > now() - interval '3 days'
+    `SELECT direction, text FROM telegram_messages WHERE agent_id = $1 AND chat_id = $2 AND created_at > now() - interval '7 days'
       ORDER BY created_at DESC LIMIT $3`, [agentId, chatId, limit])).rows.reverse();
   return rows.map((r) => `${r.direction === "in" ? "Owner" : "You"}: ${r.text.slice(0, 600)}`);
 }
@@ -157,11 +157,13 @@ async function askAgent(db: Db, agentId: string, message: string, chatId: number
       chat_mode: "This is a live two-way chat with the owner on Telegram. Your final message is sent to them as your reply: answer directly and briefly, like a text message. Do any work they ask for with your tools first. If you need something from them, ask one clear question at the end; their reply comes back to you.",
       ...(history.length ? { conversation_so_far: history } : {}),
       ...(ctx.inReplyTo ? { replying_to_your_message: ctx.inReplyTo } : {}),
-    }, priority: 2, createdBy: "owner" });
+    }, priority: 1, createdBy: "owner" });
+  await sendTyping(chatId);
   const short = Object.entries(ALIASES).find(([, v]) => v === agentId)?.[0] ?? agentId;
   if (status !== "active")
     return send(chatId, `Queued for ${AGENT_BY_ID[agentId].name}, but it's ${status}, so it won't answer yet.\nSend "/resume ${short}" to let it work (it uses AI budget), or "/resume all" for every agent. Your message will run as soon as it's resumed.`);
-  if (history.length || ctx.inReplyTo) return; // mid-conversation: the agent's reply is the acknowledgement
+  // Direct chat: no "on it" message. The typing indicator shows, then the agent's reply arrives.
+  if (agentId === "ceo" || history.length || ctx.inReplyTo) return;
   return send(chatId, `${AGENT_BY_ID[agentId].name} is on it. Reply to its answer to keep chatting.`);
 }
 
@@ -232,7 +234,7 @@ export async function handleTelegramCallback(db: Db, cq: any, ownerId = process.
  */
 export async function pushTaskUpdate(db: Db, task: { agent_id: string; type: string; title: string; created_by: string; payload?: any; id?: string }, result: any,
   send: Send = (c, t) => sendFromAgent(db, c, task.agent_id, t, { taskId: task.id, label: false }).then(() => {})) {
-  if (!telegramConfigured() || task.payload?.reply_to_telegram_chat || task.type === "health_check" || task.type === "execute_action") return;
+  if (!telegramConfigured() || task.payload?.reply_to_telegram_chat || task.type === "health_check" || task.type === "execute_action" || task.type === "owner_check_in") return;
   const owner = Number(process.env.TELEGRAM_OWNER_ID);
   const summary = String(result?.summary ?? "").trim();
   if (task.agent_id === "ceo" && task.type === "daily_summary") return send(owner, `📋 Daily summary from the CEO\n\n${clip(summary || "No summary produced.", 3500)}`);
@@ -278,7 +280,7 @@ export async function telegramSendButtons(chatId: number, text: string, buttons:
 }
 
 /** Low-level send. Returns Telegram's message_id so replies can be routed. Replaceable in tests. */
-export let rawSend = async (chatId: number, text: string, replyMarkup?: unknown): Promise<number | null> => {
+const defaultRawSend = async (chatId: number, text: string, replyMarkup?: unknown): Promise<number | null> => {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) return null;
   const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -288,7 +290,16 @@ export let rawSend = async (chatId: number, text: string, replyMarkup?: unknown)
   const j: any = await r.json().catch(() => null);
   return j?.result?.message_id ?? null;
 };
+export let rawSend = defaultRawSend;
 export function setTelegramTransport(fn: typeof rawSend) { rawSend = fn; }
+
+/** Show "typing…" in the chat while the agent works. Best effort. */
+export async function sendTyping(chatId: number) {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!token || rawSend !== defaultRawSend) return;
+  await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, action: "typing" }) }).catch(() => {});
+}
 
 /**
  * Send a message on behalf of an agent: labeled with the agent's name and

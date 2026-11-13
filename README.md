@@ -41,7 +41,7 @@ See [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md).
 `/status` · `/activity` · `/updates on|off` · `/ask <agent> <message>` (plain text goes to the CEO) · `/pause <agent|all>` · `/resume <agent|all>` · `/approvals` · `/approve <id>` · `/reject <id>` · `/boost <agent> on|off` · `/stop <reason>`.
 Agents: `ceo, store, web, content, seo, support, marketing, automation`.
 
-Chat is two-way: plain text goes to the CEO, and replying (swipe left) to any agent's message continues the conversation with that agent, with recent history as context. The bot also messages you on its own: new approval requests (with Approve/Reject buttons for low-risk ones), agents that are blocked on something only you can provide (max 2 per agent per day), errors and limit hits (once per day each), the CEO's daily summary, and a one-line update when an agent finishes work (turn off with `/updates off`). Money and legal approvals, budgets, live mode and releasing the emergency stop are dashboard-only.
+Chat is two-way: plain text goes straight to the CEO (it remembers your recent conversation), the CEO can message you first (check-ins every 6 hours only when something needs you, max 6 messages a day), and replying (swipe left) to any agent's message continues the conversation with that agent, with recent history as context. The bot also messages you on its own: new approval requests (with Approve/Reject buttons for low-risk ones), agents that are blocked on something only you can provide (max 2 per agent per day), errors and limit hits (once per day each), the CEO's daily summary, and a one-line update when an agent finishes work (turn off with `/updates off`). Money and legal approvals, budgets, live mode and releasing the emergency stop are dashboard-only.
 
 ## Layout
 ```

@@ -15,6 +15,7 @@ import { inbox } from "./messages.js";
 import { searchMemory } from "./memory.js";
 import { executeExternal } from "./integrations.js";
 import { notify } from "./notify.js";
+import { chatHistory } from "./telegram.js";
 import type { TaskRow } from "./queue.js";
 import { syncStore } from "./store/sync.js";
 
@@ -22,7 +23,7 @@ export const MAX_TURNS = Number(process.env.AGENT_MAX_TURNS ?? 6);
 
 export interface EngineDeps { db: Db; llm: LlmClient; workerId: string }
 
-const LLM_TASKS = new Set(["growth_cycle", "performance_review", "daily_summary", "portfolio_evaluation", "directive", "inbound_lead"]);
+const LLM_TASKS = new Set(["growth_cycle", "performance_review", "daily_summary", "portfolio_evaluation", "directive", "inbound_lead", "owner_check_in"]);
 
 export async function runTask(deps: EngineDeps, task: TaskRow): Promise<unknown> {
   if (task.type === "execute_action") return executeApprovedAction(deps, task);
@@ -52,6 +53,7 @@ const TASK_PROMPTS: Record<string, string> = {
 6. If a change to your own strategy/playbook is clearly supported by evidence, propose a strategy update.
 Finish with a 3-6 sentence summary of what you did and what should happen next.`,
   performance_review: `Do a performance review of your business. Compare verified results against your success metric, review experiments (conclude or abandon where appropriate, write lessons), identify failing strategies, and record findings. Propose a strategy update only if evidence supports it. Finish with a concise review.`,
+  owner_check_in: `Proactive check-in with the owner. Look at the portfolio report, pending approvals and anything new since your last message to them (see your memories). If something needs their attention or a decision, or there is a meaningful result, send ONE short message with message_owner, ending with a clear recommendation or question. If nothing is new or important, do not message them; just finish with "Nothing to report." Never send routine status.`,
   daily_summary: `Produce today's portfolio summary. Use get_portfolio_report. Report verified revenue, expenses, net profit, notable activity, failures, and pending approvals per business. Flag risks. Recommend (do not make) any budget reallocations. Save the summary as a 'report' draft. Be factual: if there is no verified revenue, say so.`,
   portfolio_evaluation: `Evaluate all seven businesses using verified profitability, operating costs, reliability, and customer satisfaction. Identify which strategies are working and failing (only with supporting data), assign follow-up tasks to business agents where useful, and recommend budget changes through recommend_budget_change if justified. Save the evaluation as a 'report' draft.`,
   directive: `Complete the assigned task described in the payload. Stay within your tools and permissions.`,
@@ -89,6 +91,8 @@ async function buildTaskMessage(db: Db, task: TaskRow) {
     mail.length ? `Unread messages from other agents:\n${JSON.stringify(mail, null, 2)}` : "",
     memories.length ? `Most recent memories:\n${memories.map((m: any) => `- [${m.kind}] ${m.title}: ${String(m.content).slice(0, 300)}`).join("\n")}` : "",
     await budgetLine(db),
+    task.type === "owner_check_in" && process.env.TELEGRAM_OWNER_ID
+      ? `Your recent Telegram conversation with the owner:\n${(await chatHistory(db, "ceo", Number(process.env.TELEGRAM_OWNER_ID))).join("\n") || "(none yet)"}` : "",
     `Current time: ${new Date().toISOString()}`,
   ].filter(Boolean).join("\n\n");
 }

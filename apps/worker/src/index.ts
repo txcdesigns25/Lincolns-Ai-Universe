@@ -22,7 +22,7 @@ import {
 const db = getDb();
 const llm = createLlmFromEnv();
 const workerId = `worker-${hostname()}-${randomUUID().slice(0, 8)}`;
-const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 2);
+const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 3); // keeps a slot free for owner chats during agent cycles
 const POLL_MS = Number(process.env.WORKER_POLL_MS ?? 5000);
 const LEASE_SECONDS = 300;
 const STORE_SYNC_MS = Number(process.env.STORE_SYNC_MINUTES ?? 15) * 60_000;

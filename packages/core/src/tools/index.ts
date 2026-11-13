@@ -8,6 +8,7 @@ import { requestApproval, authorizeAction } from "../approvals.js";
 import { enqueue } from "../queue.js";
 import { getAction } from "../policy.js";
 import { notify } from "../notify.js";
+import { sendFromAgent, telegramConfigured } from "../telegram.js";
 import { PolicyDenied } from "../errors.js";
 import { AGENTS, AGENT_BY_ID } from "../agents.js";
 import { getSpendSummary } from "../budget.js";
@@ -133,6 +134,23 @@ export const TOOLS: ToolSpec[] = [
       customer_id: z.string().uuid().optional(),
     }),
     handler: async (ctx, i) => ({ message_id: await sendAgentMessage(ctx.db, { from: ctx.agentId, ...i }) }),
+  }),
+  tool({
+    name: "message_owner",
+    description: "Send the owner a Telegram message as the CEO, without waiting for them to write first. Use it for things worth their attention now: a decision only they can make, an important result, a risk, or a short check-in with a recommendation. Their reply comes back to you with the conversation. Max 6 per day; never for routine status they can see in the daily summary.",
+    action: "owner.notify",
+    schema: z.object({ text: z.string().min(5).max(1500).describe("The message, written like a short text to the owner") }),
+    handler: async (ctx, i) => {
+      if (!telegramConfigured()) throw new PolicyDenied("telegram_not_configured", "Telegram is not set up on the worker");
+      const sent = (await ctx.db.query(
+        `SELECT count(*)::int AS n FROM telegram_messages WHERE agent_id = $1 AND direction = 'out' AND task_id IS NULL AND text LIKE '[proactive]%' AND created_at > now() - interval '1 day'`,
+        [ctx.agentId])).rows[0].n;
+      if (sent >= 6) throw new PolicyDenied("owner_message_limit", "Already sent 6 messages today; put the rest in the daily summary");
+      const owner = Number(process.env.TELEGRAM_OWNER_ID);
+      await sendFromAgent(ctx.db, owner, ctx.agentId, i.text);
+      await ctx.db.query(`UPDATE telegram_messages SET text = '[proactive] ' || text WHERE id = (SELECT max(id) FROM telegram_messages WHERE agent_id = $1 AND direction = 'out')`, [ctx.agentId]);
+      return { sent: true, remaining_today: 5 - sent };
+    },
   }),
   tool({
     name: "tell_owner_blocked",

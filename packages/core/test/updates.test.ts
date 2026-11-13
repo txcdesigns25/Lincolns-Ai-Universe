@@ -118,3 +118,30 @@ describe("two-way Telegram chat", () => {
     } finally { setTelegramTransport(orig); }
   });
 });
+
+describe("direct chat with the CEO", () => {
+  it("plain text goes straight to the CEO with no 'on it' message", async () => {
+    sent.length = 0;
+    await handleTelegramUpdate(db, msg("what should we focus on this week"), send, OWNER);
+    expect(sent).toHaveLength(0);
+    const t = (await db.query(`SELECT agent_id, priority FROM tasks WHERE title = 'Owner chat: what should we focus on this week'`)).rows[0];
+    expect(t).toEqual({ agent_id: "ceo", priority: 1 });
+  });
+
+  it("the CEO can message the owner first, at most 6 times a day, and replies continue the chat", async () => {
+    const { setTelegramTransport, rawSend } = await import("../src/telegram.js");
+    const orig = rawSend; let n = 9000; const texts: string[] = [];
+    setTelegramTransport(async (_c, t) => { texts.push(t); return n++; });
+    try {
+      const ctx = { db, agentId: "ceo", taskId: null as any };
+      for (let i = 0; i < 6; i++) await executeTool(ctx as any, ["message_owner"], "message_owner", { text: `Update number ${i}: store got first sale?` });
+      await expect(executeTool(ctx as any, ["message_owner"], "message_owner", { text: "One more thing" })).rejects.toMatchObject({ code: "owner_message_limit" });
+      expect(texts[0]).toMatch(/^Universe CEO:\nUpdate number 0/);
+      await handleTelegramUpdate(db, { message: { text: "Great, keep going", from: { id: 4242 }, chat: { id: 4242, type: "private" },
+        reply_to_message: { message_id: 9000, text: texts[0] } } }, send, OWNER);
+      const t = (await db.query(`SELECT agent_id, payload FROM tasks WHERE title = 'Owner chat: Great, keep going'`)).rows[0];
+      expect(t.agent_id).toBe("ceo");
+      expect(t.payload.conversation_so_far.join("\n")).toMatch(/Update number 5/);
+    } finally { setTelegramTransport(orig); }
+  });
+});
