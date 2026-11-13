@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
-  authorizeSpend, enqueue, claimNext, runTask, tickScheduler, tierForTask, tiersFromEnv, handleTelegramUpdate, type Db, type LlmRequest,
+  authorizeSpend, releaseStaleReservations, toolUse, enqueue, claimNext, runTask, tickScheduler, tierForTask, tiersFromEnv, handleTelegramUpdate, type Db, type LlmRequest,
 } from "../src/index.js";
 import { freshDb, setLimits } from "./helpers.js";
 
@@ -93,5 +93,33 @@ describe("escalation to the stronger model", () => {
     expect((await db.query(`SELECT boost FROM agents WHERE id = 'digital_store'`)).rows[0].boost).toBe(true);
     await handleTelegramUpdate(db, msg("boost store off"), async (_c, t) => { sent.push(t); }, "42");
     expect((await db.query(`SELECT boost FROM agents WHERE id = 'digital_store'`)).rows[0].boost).toBe(false);
+  });
+});
+
+describe("accurate small charges", () => {
+  it("does not round every cheap call up to a whole cent", async () => {
+    await setLimits(db, "seo_agency", big);
+    let i = 0;
+    const llm = {
+      provider: "anthropic" as const, model: "claude-haiku-5-5", maxTokens: 1000,
+      tierConfig: () => ({ model: "claude-haiku-5-5", maxTokens: 1000, effort: "low" as const }),
+      // 5 turns at 20k in / 2k out on Haiku = 0.3 cents each, 1.5 cents total
+      create: async () => (++i < 5
+        ? { content: [toolUse("search_memory", { query: "x" })] as any, stop_reason: "tool_use", usage: { input_tokens: 20_000, output_tokens: 2_000 }, model: "claude-haiku-5-5" }
+        : { content: [{ type: "text", text: "ok", citations: null }] as any, stop_reason: "end_turn", usage: { input_tokens: 20_000, output_tokens: 2_000 }, model: "claude-haiku-5-5" }),
+    };
+    await enqueue(db, { agentId: "seo_agency", type: "directive", title: "frac" });
+    const task = (await claimNext(db, "w"))!;
+    await runTask({ db, llm, workerId: "w" }, task);
+    const total = (await db.query(`SELECT COALESCE(SUM(settled_cents),0)::int AS c FROM spend_authorizations WHERE task_id = $1`, [task.id])).rows[0].c;
+    expect(total).toBe(2); // 1.5 rounded up once, not 5 x 1
+  });
+
+  it("releases AI reservations left behind by a killed worker", async () => {
+    await setLimits(db, "web_agency", big);
+    const id = await authorizeSpend(db, { agentId: "web_agency", category: "ai_api", amountCents: 20, reason: "orphan" });
+    await db.query(`UPDATE spend_authorizations SET created_at = now() - interval '2 hours' WHERE id = $1`, [id]);
+    expect(await releaseStaleReservations(db)).toBe(1);
+    expect((await db.query(`SELECT status FROM spend_authorizations WHERE id = $1`, [id])).rows[0].status).toBe("released");
   });
 });

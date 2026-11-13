@@ -13,7 +13,7 @@
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
-  tiersFromEnv, getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
+  tiersFromEnv, releaseStaleReservations, getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
   extendLease, runTask, tickScheduler, processInboundEvents, PolicyDenied, RetryableError, AwaitingApproval, notify, audit,
   telegramConfigured, pollTelegramOnce, telegramSend, initTelegram,
 } from "@universe/core";
@@ -33,6 +33,8 @@ async function housekeeping() {
   await db.query(
     `INSERT INTO workers (id, hostname) VALUES ($1,$2)
      ON CONFLICT (id) DO UPDATE SET last_heartbeat = now()`, [workerId, hostname()]);
+  const released = await releaseStaleReservations(db);
+  if (released) log(`released ${released} stale AI reservation(s)`);
   const recovered = await recoverExpiredLeases(db);
   if (recovered) log(`recovered ${recovered} task(s) from expired leases`);
   const scheduled = await tickScheduler(db);

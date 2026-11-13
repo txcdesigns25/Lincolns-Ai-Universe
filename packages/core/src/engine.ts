@@ -110,6 +110,7 @@ async function runAgentTask({ db, llm, workerId }: EngineDeps, task: TaskRow) {
   const system = await buildSystemPrompt(db, task.agent_id);
   const messages: MessageParam[] = [{ role: "user", content: await buildTaskMessage(db, task) }];
   let totalCost = 0;
+  let settledCents = 0;
   const toolLog: { tool: string; ok: boolean; summary: string }[] = [];
   let finalText = "";
   let stop: string | null = null;
@@ -129,10 +130,16 @@ async function runAgentTask({ db, llm, workerId }: EngineDeps, task: TaskRow) {
       await releaseSpend(db, authId);
       throw err;
     }
-    // 2. Settle the actual cost into the ledger.
+    // 2. Settle the actual cost into the ledger. Cheap calls cost a fraction of
+    // a cent, so carry the fraction across turns instead of rounding every call
+    // up to a whole cent; the task's last call settles the rounded-up remainder.
     const actual = llm.provider === "mock" ? 0 : costCents(res.model, res.usage);
     totalCost += actual;
-    await settleSpend(db, authId, Math.ceil(actual), {
+    const hasTools = res.content.some((b: any) => b.type === "tool_use");
+    const isLast = turn === MAX_TURNS - 1 || !(res.stop_reason === "pause_turn" || (res.stop_reason === "tool_use" && hasTools));
+    const due = (isLast ? Math.ceil(totalCost - 1e-9) : Math.floor(totalCost)) - settledCents;
+    settledCents += Math.max(0, due);
+    await settleSpend(db, authId, Math.max(0, due), {
       source: llm.provider === "mock" ? "sandbox" : "anthropic_usage", sandbox: llm.provider === "mock",
       description: `${res.model}: ${res.usage.input_tokens} in / ${res.usage.output_tokens} out tokens (task ${task.id})`,
     });

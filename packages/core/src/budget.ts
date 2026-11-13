@@ -212,6 +212,19 @@ export async function releaseSpend(q: Queryable, authorizationId: string) {
                  WHERE id = $1 AND status = 'reserved'`, [authorizationId]);
 }
 
+/**
+ * AI reservations are held only for the length of one model call. If a worker
+ * is killed mid-call (a redeploy, a crash), its reservation would otherwise
+ * stay "reserved" forever and keep counting against the caps. Release any AI
+ * reservation older than 30 minutes; a model call never takes that long.
+ */
+export async function releaseStaleReservations(q: Queryable, olderThanMinutes = 30): Promise<number> {
+  const r = await q.query(`UPDATE spend_authorizations SET status = 'released', settled_at = now()
+                            WHERE status = 'reserved' AND category = 'ai_api' AND created_at < now() - ($1 || ' minutes')::interval`,
+    [String(olderThanMinutes)]);
+  return r.rowCount ?? 0;
+}
+
 /** Owner-only path to change limits. Agents have no tool that reaches this. */
 export async function setBudget(db: Db, agentId: string, limits: Partial<BudgetLimits>, by: string) {
   if (by !== "owner") throw new PolicyDenied("owner_only", "Only the owner can change budgets");
