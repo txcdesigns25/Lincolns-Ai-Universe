@@ -1,0 +1,15 @@
+{
+  "name": "ai-universe",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "db:migrate": "pnpm --filter @universe/core exec tsx src/scripts/migrate.ts --seed",
+    "worker": "pnpm --filter @universe/worker start",
+    "dev": "pnpm --filter @universe/web dev",
+    "build": "pnpm --filter @universe/web build",
+    "test": "pnpm --filter @universe/core test",
+    "typecheck": "pnpm -r typecheck",
+    "start:web": "pnpm --filter @universe/web start",
+    "start:worker": "pnpm --filter @universe/worker start:prod"
+  }
+}

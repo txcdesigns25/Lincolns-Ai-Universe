@@ -1,0 +1,19 @@
+{
+  "name": "@universe/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "start:prod": "tsx ../../packages/core/src/scripts/migrate.ts --seed && tsx src/index.ts"
+  },
+  "dependencies": {
+    "@universe/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

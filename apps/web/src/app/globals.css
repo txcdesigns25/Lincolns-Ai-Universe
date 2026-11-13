@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #07090d;
+  --color-panel: #0d1117;
+  --color-panel-2: #121821;
+  --color-line: #1d2531;
+  --color-ink: #e6edf3;
+  --color-muted: #8b98a8;
+  --color-faint: #5b6776;
+  --color-accent: #7c9cff;
+  --color-good: #3fcf8e;
+  --color-bad: #f2706d;
+  --color-warn: #f0b94a;
+  --font-sans: "Inter", "Segoe UI Variable", "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+}
+
+html, body { background: var(--color-bg); color: var(--color-ink); }
+body { font-feature-settings: "tnum" 1, "cv11" 1; -webkit-font-smoothing: antialiased; }
+.tabular { font-variant-numeric: tabular-nums; }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise .35s ease-out both; }
+@keyframes pulse-dot { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+.pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+input, select, textarea { background: var(--color-panel-2); border: 1px solid var(--color-line); border-radius: .5rem; padding: .4rem .6rem; color: var(--color-ink); font-size: .875rem; }
+input:focus, select:focus, textarea:focus { outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent); outline-offset: 1px; }
