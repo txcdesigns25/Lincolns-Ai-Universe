@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import { Card, PageHeader, Table, Badge, Money, Stat } from "@/components/ui";
+import { Card, PageHeader, Table, Badge, Money, Stat, Button } from "@/components/ui";
+import { setLiveMode } from "../../actions";
 import { ago } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,16 @@ export default async function StorePage() {
   return (
     <>
       <PageHeader title="Digital Product Store" subtitle="Agent 01 runs this store on its own: niche, brand, products, prices. Only the one allowed Shopify store can be written to." />
+      {!agent?.live_mode ? (
+        <Card title="Go live" className="mb-4">
+          <p className="text-sm text-muted">The agent is in sandbox mode: it designs a brand and products, but nothing reaches Shopify. Turn on live mode to let it run the store for real. Anything it designed in sandbox is then published automatically.</p>
+          <form action={setLiveMode} className="mt-3 flex flex-wrap items-center gap-2">
+            <input type="hidden" name="agent_id" value="digital_store" /><input type="hidden" name="live" value="true" />
+            <input name="confirm" placeholder="Type LIVE" className="w-32" />
+            <Button tone="danger">Enable live mode</Button>
+          </form>
+        </Card>
+      ) : null}
       <div className="mb-4 grid gap-3 sm:grid-cols-4">
         <Stat label="Real orders" value={totals.n} />
         <Stat label="Revenue" value={<Money cents={Number(totals.revenue)} />} hint="Shopify, excludes test orders" />
@@ -47,7 +58,12 @@ export default async function StorePage() {
             <div className="flex justify-between"><dt className="text-muted">Agent</dt><dd><Badge>{agent?.status}</Badge> {agent?.live_mode ? <Badge tone="active">live</Badge> : <Badge tone="paused">sandbox</Badge>}</dd></div>
             <div className="flex justify-between"><dt className="text-muted">Last order sync</dt><dd>{ago(kv.shopify_orders_cursor?.synced_at)}</dd></div>
           </dl>
-          {!agent?.live_mode && <p className="mt-3 text-xs text-muted">In sandbox mode the agent designs products and a brand but nothing is sent to Shopify. Turn on live mode on the agent&apos;s page when Shopify is connected.</p>}
+          {agent?.live_mode && (
+            <form action={setLiveMode} className="mt-3">
+              <input type="hidden" name="agent_id" value="digital_store" /><input type="hidden" name="live" value="false" />
+              <Button>Switch back to sandbox</Button>
+            </form>
+          )}
         </Card>
       </div>
       <Card title="Products" className="mt-4">

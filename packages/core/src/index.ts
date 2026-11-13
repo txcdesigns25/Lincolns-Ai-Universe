@@ -24,6 +24,6 @@ export { migrate, seed } from "./migrate-lib.js";
 export * from "./telegram.js";
 export * from "./store/guard.js";
 export { ShopifyClient, shopifyConfigured, SHOPIFY_API_VERSION } from "./store/shopify.js";
-export { syncStore, applyOrder, refreshStats } from "./store/sync.js";
+export { syncStore, applyOrder, refreshStats, promoteSandboxDrafts } from "./store/sync.js";
 export { getBrand, publicBaseUrl } from "./store/publish.js";
 export { STORE_TOOLS, executeStoreDraft } from "./store/tools.js";

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import {
-  checkConfig, checkIdentity, isBlockedStore, ShopifyClient, applyOrder, syncStore, runTask, claimNext, AGENT_BY_ID, type Db,
+  checkConfig, checkIdentity, isBlockedStore, ShopifyClient, applyOrder, syncStore, promoteSandboxDrafts, runTask, claimNext, AGENT_BY_ID, type Db,
 } from "../src/index.js";
 import { executeTool } from "../src/tools/index.js";
 import { renderSpreadsheet, renderPlanner, coverSvg, renderPng } from "../src/store/products.js";
@@ -141,6 +141,19 @@ describe("agent store workflow", () => {
     const brand = (await db.query(`SELECT value FROM kv_store WHERE key = 'store_brand'`)).rows[0].value;
     expect(brand).toMatchObject({ name: "Ledgerly", sandbox: true });
     expect((await db.query(`SELECT status FROM store_products WHERE id = $1`, [p.product_id])).rows[0].status).toBe("built");
+  });
+
+  it("replays sandbox work for real once the agent goes live, once", async () => {
+    expect(await promoteSandboxDrafts(db)).toBe(0); // still sandbox
+    await db.query(`UPDATE agents SET live_mode = TRUE WHERE id = 'digital_store'`);
+    try {
+      expect(await promoteSandboxDrafts(db)).toBe(2);
+      expect(await promoteSandboxDrafts(db)).toBe(0);
+      const q = (await db.query(`SELECT priority, payload FROM tasks WHERE created_by = 'store_sync' AND status = 'queued' ORDER BY priority`)).rows;
+      expect(q.map((t) => t.priority)).toEqual([2, 3]);
+      expect(q.every((t) => t.payload.action === "store.publish_owned")).toBe(true);
+      await db.query(`UPDATE tasks SET status = 'cancelled' WHERE created_by = 'store_sync'`);
+    } finally { await db.query(`UPDATE agents SET live_mode = FALSE WHERE id = 'digital_store'`); }
   });
 
   it("caps new products per day", async () => {
