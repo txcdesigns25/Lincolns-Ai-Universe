@@ -4,8 +4,9 @@ import { db } from "./db";
 
 export async function agentsWithStats(since?: Date) {
   const agents = (await db().query(
-    `SELECT a.*, b.*, t.title AS current_task_title FROM agents a
+    `SELECT a.*, b.*, CASE WHEN c.per_agent_limits_enabled THEN b.daily_limit ELSE c.global_monthly_limit END AS daily_limit, CASE WHEN c.per_agent_limits_enabled THEN b.weekly_limit ELSE c.global_monthly_limit END AS weekly_limit, CASE WHEN c.per_agent_limits_enabled THEN b.monthly_limit ELSE c.global_monthly_limit END AS monthly_limit, CASE WHEN c.per_agent_limits_enabled THEN b.ai_monthly_limit ELSE c.global_monthly_limit END AS ai_monthly_limit, CASE WHEN c.per_agent_limits_enabled THEN b.starting_budget ELSE c.global_monthly_limit END AS starting_budget, c.per_agent_limits_enabled, t.title AS current_task_title FROM agents a
        LEFT JOIN agent_budgets b ON b.agent_id = a.id
+       CROSS JOIN system_controls c
        LEFT JOIN tasks t ON t.id = a.current_task_id ORDER BY a.code`)).rows;
   return Promise.all(agents.map(async (a) => ({
     ...a,

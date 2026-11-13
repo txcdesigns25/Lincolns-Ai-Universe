@@ -5,7 +5,7 @@ A business operating system: one **Universe CEO** and seven AI-run businesses (d
 **Status:** Phase 1 (platform) and Phase 2 (agent engine) are built and tested. Nothing is deployed yet and no business is earning revenue. See [docs/STATUS.md](docs/STATUS.md) for the honest built-vs-planned list and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it works.
 
 ## Safety in one paragraph
-Every expense is reserved against backend-enforced limits before it happens (7 per-agent limits plus a global $50/month cap). Agents can't change limits or permissions. Anything that reaches the outside world needs a pre-authorization or your approval, and approved actions are executed by deterministic code, not the AI. An emergency stop blocks all spending and external actions at once. Revenue counts only when it comes from a payment provider. Agents start paused and in sandbox mode. The Shopify integration refuses to write to the TXC Designs store.
+Every expense is reserved against a backend-enforced shared monthly budget before it happens (set on Budgets; optional per-agent and daily limits can be switched on). Agents can't change limits or permissions. Anything that reaches the outside world needs a pre-authorization or your approval, and approved actions are executed by deterministic code, not the AI. An emergency stop blocks all spending and external actions at once. Revenue counts only when it comes from a payment provider. Agents start paused and in sandbox mode. The Shopify integration refuses to write to the TXC Designs store.
 
 ## Run locally
 Requirements: Node 22, pnpm 10, Docker (for Postgres).

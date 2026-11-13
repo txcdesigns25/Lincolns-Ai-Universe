@@ -20,10 +20,9 @@ describe("cheap by default", () => {
     expect(tiersFromEnv({ CLAUDE_MODEL: "claude-sonnet-5-5", CLAUDE_MODEL_IMPORTANT: "claude-opus-5-5" }).important.model).toBe("claude-opus-5-5");
   });
 
-  it("seeds conservative per-agent limits and a $1.50/day global AI cap", async () => {
+  it("seeds conservative per-agent limits (used only if the owner switches them on)", async () => {
     const b = (await db.query(`SELECT daily_limit, monthly_limit FROM agent_budgets WHERE agent_id = 'seo_agency'`)).rows[0];
     expect(b).toEqual({ daily_limit: 25, monthly_limit: 300 });
-    expect((await db.query(`SELECT global_daily_limit FROM system_controls`)).rows[0].global_daily_limit).toBe(150);
   });
 
   it("staggers first runs so agents do not all fire at once", async () => {
@@ -121,5 +120,32 @@ describe("accurate small charges", () => {
     await db.query(`UPDATE spend_authorizations SET created_at = now() - interval '2 hours' WHERE id = $1`, [id]);
     expect(await releaseStaleReservations(db)).toBe(1);
     expect((await db.query(`SELECT status FROM spend_authorizations WHERE id = $1`, [id])).rows[0].status).toBe("released");
+  });
+});
+
+describe("owner budget mode: one global monthly cap, no per-agent or daily limits", () => {
+  it("only the global monthly cap applies when per-agent limits are off", async () => {
+    await db.query(`UPDATE system_controls SET per_agent_limits_enabled = FALSE, global_daily_limit = NULL, global_monthly_limit = 50000`);
+    await setLimits(db, "marketing_agency", { daily_limit: 1, monthly_limit: 1, per_transaction_limit: 1, ai_monthly_limit: 1, starting_budget: 1, weekly_limit: 1 });
+    expect(await authorizeSpend(db, { agentId: "marketing_agency", category: "ai_api", amountCents: 400, reason: "big" })).toBeTruthy();
+    await db.query(`UPDATE system_controls SET global_monthly_limit = 1`);
+    await expect(authorizeSpend(db, { agentId: "marketing_agency", category: "ai_api", amountCents: 400, reason: "over" }))
+      .rejects.toMatchObject({ code: "global_monthly_limit" });
+    // Real-money spending still needs an approval.
+    await db.query(`UPDATE system_controls SET global_monthly_limit = 50000`);
+    await expect(authorizeSpend(db, { agentId: "marketing_agency", category: "advertising", amountCents: 100, reason: "ads" }))
+      .rejects.toMatchObject({ code: "approval_required" });
+    await db.query(`DELETE FROM spend_authorizations WHERE status = 'reserved'`);
+    await db.query(`UPDATE system_controls SET per_agent_limits_enabled = TRUE, global_daily_limit = 150, global_monthly_limit = 5000`);
+  });
+
+  it("skips a weekly review with no new activity, without calling the model", async () => {
+    const { MockLlm } = await import("../src/index.js");
+    const llm = new MockLlm();
+    await enqueue(db, { agentId: "automation_agency", type: "performance_review", title: "Weekly review" });
+    const task = (await claimNext(db, "w"))!;
+    const r: any = await runTask({ db, llm, workerId: "w" }, task);
+    expect(r.skipped).toBe(true);
+    expect(llm.calls.length).toBe(0);
   });
 });

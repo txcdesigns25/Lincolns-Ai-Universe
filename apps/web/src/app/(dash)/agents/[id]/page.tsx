@@ -14,7 +14,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const q = db();
   const [agent, budget, fin, spend, cfg, tasks, upcoming, decisions, learning, approvals, errors, perms, customers] = await Promise.all([
     q.query(`SELECT a.*, t.title AS current_task_title FROM agents a LEFT JOIN tasks t ON t.id = a.current_task_id WHERE a.id = $1`, [id]).then((r) => r.rows[0]),
-    q.query(`SELECT * FROM agent_budgets WHERE agent_id = $1`, [id]).then((r) => r.rows[0]),
+    q.query(`SELECT b.*, CASE WHEN c.per_agent_limits_enabled THEN b.daily_limit ELSE c.global_monthly_limit END AS daily_limit, CASE WHEN c.per_agent_limits_enabled THEN b.weekly_limit ELSE c.global_monthly_limit END AS weekly_limit, CASE WHEN c.per_agent_limits_enabled THEN b.monthly_limit ELSE c.global_monthly_limit END AS monthly_limit, CASE WHEN c.per_agent_limits_enabled THEN b.ai_monthly_limit ELSE c.global_monthly_limit END AS ai_monthly_limit, CASE WHEN c.per_agent_limits_enabled THEN b.starting_budget ELSE c.global_monthly_limit END AS starting_budget, c.per_agent_limits_enabled FROM agent_budgets b CROSS JOIN system_controls c WHERE b.agent_id = $1`, [id]).then((r) => r.rows[0]),
     getFinancials(q, { agentId: id }),
     getSpendSummary(q, id),
     getActiveConfig(q, id),
@@ -44,7 +44,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         <Stat label="Revenue" value={usd(fin.grossRevenue)} />
         <Stat label="Expenses" value={usd(fin.totalExpenses)} />
         <Stat label="Net profit" value={usd(fin.netProfit)} tone={fin.netProfit > 0 ? "good" : fin.netProfit < 0 ? "bad" : undefined} />
-        <Stat label="Available budget" value={usd(Math.max(0, budget.monthly_limit - spend.month))} hint="this month" />
+        <Stat label={budget.per_agent_limits_enabled ? "Available budget" : "Spent this month"} value={usd(budget.per_agent_limits_enabled ? Math.max(0, budget.monthly_limit - spend.month) : spend.month)} hint={budget.per_agent_limits_enabled ? "this month" : `of the shared ${usd(budget.monthly_limit)} budget`} />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -100,7 +100,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card title="Configure budget (USD)"><BudgetForm agentId={id} b={budget} /></Card>
+        {budget.per_agent_limits_enabled && <Card title="Configure budget (USD)"><BudgetForm agentId={id} b={budget} /></Card>}
         <Card title="Permissions">
           <p className="mb-3 text-xs text-muted">Level 2 actions run automatically only when you pre-authorize them here. Level 3 actions always need individual approval.</p>
           <ul className="space-y-2 text-sm">
@@ -115,7 +115,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
           </ul>
           <div className="mt-5 border-t border-line pt-4">
             <h3 className="text-sm font-medium">Model: {agent.boost ? "Boosted (stronger model)" : "Cheap (default)"}</h3>
-            <p className="mt-1 text-xs text-muted">Agents run on the cheap model by default. Boost an agent when it is on an important project; it then uses the stronger model, still within every budget cap. Inbound customer leads always use the stronger model.</p>
+            <p className="mt-1 text-xs text-muted">Agents run on the cheap model by default. Boost an agent when it is on an important project; it then uses the stronger model, still within the shared monthly budget. Inbound customer leads always use the stronger model.</p>
             <form action={setBoost} className="mt-2">
               <input type="hidden" name="agent_id" value={id} /><input type="hidden" name="boost" value={agent.boost ? "false" : "true"} />
               <Button tone={agent.boost ? "good" : "default"}>{agent.boost ? "Turn boost off" : "Boost this agent"}</Button>

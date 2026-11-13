@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import {
-  decideApproval, engageEmergencyStop, releaseEmergencyStop, setBudget, setGlobalMonthlyLimit, setGlobalDailyLimit, grantPermission,
+  decideApproval, engageEmergencyStop, releaseEmergencyStop, setBudget, setGlobalMonthlyLimit, setGlobalDailyLimit, setPerAgentLimitsEnabled, grantPermission,
   activateConfigVersion, rejectConfigVersion, enqueue, audit, ACTIONS,
 } from "@universe/core";
 import { db } from "@/lib/db";
@@ -85,7 +85,14 @@ export async function updateBudget(form: FormData) {
 export async function updateGlobalLimit(form: FormData) {
   const by = await requireOwner();
   await setGlobalMonthlyLimit(db(), cents(form.get("global_monthly_limit")), by);
-  if (form.get("global_daily_limit") != null) await setGlobalDailyLimit(db(), cents(form.get("global_daily_limit")), by);
+  const daily = form.get("global_daily_limit");
+  if (daily != null) await setGlobalDailyLimit(db(), String(daily).trim() === "" ? null : cents(daily), by);
+  revalidatePath("/", "layout");
+}
+
+export async function togglePerAgentLimits(form: FormData) {
+  const by = await requireOwner();
+  await setPerAgentLimitsEnabled(db(), form.get("enabled") === "true", by);
   revalidatePath("/", "layout");
 }
 

@@ -3,12 +3,14 @@ import { createDb, migrate, seed, type Db } from "../src/index.js";
 export const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? "postgres://universe:universe@localhost:5432/universe_test";
 
 /** Fresh schema for each test file: drop everything, migrate, seed, activate agents. */
-export async function freshDb(): Promise<Db> {
+export async function freshDb(opts: { perAgentLimits?: boolean } = {}): Promise<Db> {
   const db = createDb(TEST_DB_URL);
   await db.query(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`);
   await migrate(db, () => {});
   await seed(db);
   await db.query(`UPDATE agents SET status = 'active'`);
+  // Most suites exercise the optional per-agent limits and daily cap explicitly.
+  if (opts.perAgentLimits !== false) await db.query(`UPDATE system_controls SET per_agent_limits_enabled = TRUE, global_daily_limit = 150`);
   return db;
 }
 

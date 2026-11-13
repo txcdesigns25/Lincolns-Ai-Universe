@@ -51,12 +51,19 @@ export async function globalDaySpend(q: Queryable): Promise<number> {
   return Number(rows[0].total);
 }
 
-/** Owner-only: change the daily cap across all agents. */
-export async function setGlobalDailyLimit(db: Db, cents: number, by: string) {
+/** Owner-only: change the daily AI cap across all agents. null turns it off. */
+export async function setGlobalDailyLimit(db: Db, cents: number | null, by: string) {
   if (by !== "owner") throw new PolicyDenied("owner_only", "Only the owner can change the global limit");
-  if (!Number.isInteger(cents) || cents < 0) throw new PolicyDenied("invalid_limit", "Limit must be non-negative cents");
+  if (cents !== null && (!Number.isInteger(cents) || cents < 0)) throw new PolicyDenied("invalid_limit", "Limit must be non-negative cents");
   await db.query(`UPDATE system_controls SET global_daily_limit = $1, updated_at = now() WHERE id`, [cents]);
   await audit(db, { actor: by, action: "budget.global_daily_update", outcome: "info", details: { cents } });
+}
+
+/** Owner-only: switch per-agent limits on or off (the global monthly cap always applies). */
+export async function setPerAgentLimitsEnabled(db: Db, enabled: boolean, by: string) {
+  if (by !== "owner") throw new PolicyDenied("owner_only", "Only the owner can change limits");
+  await db.query(`UPDATE system_controls SET per_agent_limits_enabled = $1, updated_at = now() WHERE id`, [enabled]);
+  await audit(db, { actor: by, action: `budget.per_agent_limits.${enabled ? "on" : "off"}`, outcome: "info" });
 }
 
 /** Owner-only: change the cap across all agents. */
@@ -113,7 +120,7 @@ export async function authorizeSpend(db: Db, req: AuthorizeRequest): Promise<str
 
     // Lock the global controls row first (serializes spend across ALL agents so
     // the global cap holds under concurrency), then the agent's budget row.
-    const controls = (await tx.query(`SELECT emergency_stop, global_monthly_limit, global_daily_limit FROM system_controls WHERE id FOR UPDATE`)).rows[0];
+    const controls = (await tx.query(`SELECT emergency_stop, global_monthly_limit, global_daily_limit, per_agent_limits_enabled FROM system_controls WHERE id FOR UPDATE`)).rows[0];
     const b = await tx.query(`SELECT * FROM agent_budgets WHERE agent_id = $1 FOR UPDATE`, [req.agentId]);
     const limits = b.rows[0] as BudgetLimits | undefined;
 
@@ -132,7 +139,8 @@ export async function authorizeSpend(db: Db, req: AuthorizeRequest): Promise<str
     const agent = (await tx.query(`SELECT status FROM agents WHERE id = $1`, [req.agentId])).rows[0];
     if (!agent) return deny("unknown_agent", "Agent does not exist");
     if (agent.status !== "active") return deny("agent_not_active", `Agent is ${agent.status}`);
-    if (!limits) return deny("no_budget", "No budget configured");
+    const perAgent = !!controls.per_agent_limits_enabled;
+    if (perAgent && !limits) return deny("no_budget", "No budget configured");
 
     // Non-AI spend always needs a human approval attached (Level 3).
     if (req.category !== "ai_api" && !req.approvalId)
@@ -146,19 +154,24 @@ export async function authorizeSpend(db: Db, req: AuthorizeRequest): Promise<str
         return deny("approval_exceeded", "Amount exceeds the approved amount");
     }
 
-    if (req.amountCents > limits.per_transaction_limit)
-      return deny("per_transaction_limit", `${req.amountCents} > ${limits.per_transaction_limit}`);
-
-    const s = await getSpendSummary(tx, req.agentId);
-    const checks: [string, number, number][] = [
-      ["daily_limit", s.day, limits.daily_limit],
-      ["weekly_limit", s.week, limits.weekly_limit],
-      ["monthly_limit", s.month, limits.monthly_limit],
-      ["starting_budget", s.lifetime, limits.starting_budget],
-    ];
-    if (req.category === "ai_api") checks.push(["ai_monthly_limit", s.aiMonth, limits.ai_monthly_limit]);
-    if (req.category === "advertising") checks.push(["ads_monthly_limit", s.adsMonth, limits.ads_monthly_limit]);
-    if (req.category === "ai_api") checks.push(["global_daily_limit", await globalDaySpend(tx), controls.global_daily_limit]);
+    // Per-agent limits are optional (off unless the owner turns them on in Budgets).
+    const checks: [string, number, number][] = [];
+    if (perAgent && limits) {
+      if (req.amountCents > limits.per_transaction_limit)
+        return deny("per_transaction_limit", `${req.amountCents} > ${limits.per_transaction_limit}`);
+      const s = await getSpendSummary(tx, req.agentId);
+      checks.push(
+        ["daily_limit", s.day, limits.daily_limit],
+        ["weekly_limit", s.week, limits.weekly_limit],
+        ["monthly_limit", s.month, limits.monthly_limit],
+        ["starting_budget", s.lifetime, limits.starting_budget],
+      );
+      if (req.category === "ai_api") checks.push(["ai_monthly_limit", s.aiMonth, limits.ai_monthly_limit]);
+      if (req.category === "advertising") checks.push(["ads_monthly_limit", s.adsMonth, limits.ads_monthly_limit]);
+    }
+    // Optional global daily AI cap (NULL = off).
+    if (req.category === "ai_api" && controls.global_daily_limit != null)
+      checks.push(["global_daily_limit", await globalDaySpend(tx), Number(controls.global_daily_limit)]);
     checks.push(["global_monthly_limit", await globalMonthSpend(tx), controls.global_monthly_limit]);
     for (const [name, used, limit] of checks) {
       if (used + req.amountCents > limit) return deny(name, `would reach ${used + req.amountCents} of ${limit}`);

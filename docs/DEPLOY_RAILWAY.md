@@ -45,7 +45,7 @@ Both services run database migrations on start (safe to repeat; a lock prevents 
 
 ## Costs
 - Railway: about $5–20/month for web + worker + Postgres. Set a usage limit in Railway billing. This is separate from the agents' cap.
-- Agents: hard-capped at $1.50/day and $50/month total (change on **Budgets**). Cheap model by default; boost an agent (agent page or Telegram `/boost store on`) only for important projects.
+- Agents: one shared monthly budget, hard-enforced (change on **Budgets**). Cheap model (Haiku) by default; boost an agent (agent page or Telegram `/boost store on`) only for important projects. Typical cost on Haiku: a few cents per day.
 
 ## Updating
 Every push to `main` redeploys both services automatically.

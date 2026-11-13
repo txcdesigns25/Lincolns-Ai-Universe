@@ -3,7 +3,7 @@ import type { Db } from "./db.js";
 import { withTx } from "./db.js";
 import type { LlmClient, MessageParam, Tier } from "./llm.js";
 import { estimateMaxCostCents, costCents } from "./llm.js";
-import { authorizeSpend, settleSpend, releaseSpend, setBudget } from "./budget.js";
+import { authorizeSpend, settleSpend, releaseSpend, setBudget, globalMonthSpend } from "./budget.js";
 import { authorizeAction } from "./approvals.js";
 import { assertAgentMayAct } from "./controls.js";
 import { AGENT_BY_ID } from "./agents.js";
@@ -18,7 +18,7 @@ import { notify } from "./notify.js";
 import type { TaskRow } from "./queue.js";
 import { syncStore } from "./store/sync.js";
 
-export const MAX_TURNS = Number(process.env.AGENT_MAX_TURNS ?? 8);
+export const MAX_TURNS = Number(process.env.AGENT_MAX_TURNS ?? 6);
 
 export interface EngineDeps { db: Db; llm: LlmClient; workerId: string }
 
@@ -39,7 +39,7 @@ const HARD_RULES = `Operating rules (enforced by the platform; you cannot change
 - Never invent revenue, results, customers, or data. Distinguish observations, hypotheses, and verified results.
 - Follow platform rules, anti-spam and privacy law. No scraping private data, no bulk unsolicited messages, no impersonating humans, no fake reviews, no manipulative SEO.
 - Prefer sustainable revenue, customer satisfaction, and verified net profit over vanity metrics.
-- Every model call costs money from your budget. Do useful work, then stop. Do not chat.`;
+- Every model call costs money from the shared budget. Do useful work, then stop. Do not chat.`;
 
 const TASK_PROMPTS: Record<string, string> = {
   growth_cycle: `Run one autonomous growth cycle: RESEARCH -> PLAN -> EXECUTE -> MEASURE -> LEARN -> OPTIMIZE.
@@ -71,6 +71,14 @@ async function buildSystemPrompt(db: Db, agentId: string) {
   ].join("\n\n");
 }
 
+/** Shared budget context. Kept out of the system prompt so prompt caching still works. */
+async function budgetLine(db: Db) {
+  const c = (await db.query(`SELECT global_monthly_limit FROM system_controls WHERE id`)).rows[0];
+  const used = await globalMonthSpend(db);
+  const usd = (x: number) => `$${(x / 100).toFixed(2)}`;
+  return `Budget: all agents share one monthly budget of ${usd(c.global_monthly_limit)}; ${usd(used)} used so far this month. There are no per-agent limits, so spend effort where it earns verified profit. Model calls are paid automatically; any real-money purchase, ad spend or contract still needs the owner's approval through request_approval.`;
+}
+
 async function buildTaskMessage(db: Db, task: TaskRow) {
   const [mail, memories] = await Promise.all([inbox(db, task.agent_id, 5), searchMemory(db, task.agent_id, "", 6)]);
   return [
@@ -79,6 +87,7 @@ async function buildTaskMessage(db: Db, task: TaskRow) {
     Object.keys(task.payload ?? {}).length ? `Payload:\n${JSON.stringify(task.payload, null, 2)}` : "",
     mail.length ? `Unread messages from other agents:\n${JSON.stringify(mail, null, 2)}` : "",
     memories.length ? `Most recent memories:\n${memories.map((m: any) => `- [${m.kind}] ${m.title}: ${String(m.content).slice(0, 300)}`).join("\n")}` : "",
+    await budgetLine(db),
     `Current time: ${new Date().toISOString()}`,
   ].filter(Boolean).join("\n\n");
 }
@@ -103,8 +112,30 @@ export async function tierForTask(db: Db, task: TaskRow): Promise<Tier> {
   return "routine";
 }
 
+/**
+ * Reviews with nothing new to review are skipped without a model call.
+ * "New" means the agent did real work (drafts, experiments, messages,
+ * approvals) or received money/customers since its last review.
+ */
+async function nothingToReview(db: Db, task: TaskRow): Promise<boolean> {
+  if (task.type !== "performance_review" && task.type !== "portfolio_evaluation") return false;
+  const scope = task.type === "portfolio_evaluation" ? null : task.agent_id;
+  const r = (await db.query(
+    `SELECT
+       (SELECT count(*) FROM tool_calls WHERE ($1::text IS NULL OR agent_id = $1) AND created_at > now() - interval '7 days'
+          AND tool NOT IN ('record_memory','search_memory','review_experiments','get_own_financials','list_own_customers','get_portfolio_report'))
+     + (SELECT count(*) FROM ledger_entries WHERE ($1::text IS NULL OR agent_id = $1) AND created_at > now() - interval '7 days' AND entry_type <> 'ai_api')
+     + (SELECT count(*) FROM customers WHERE ($1::text IS NULL OR owner_agent_id = $1) AND created_at > now() - interval '7 days') AS n`,
+    [scope])).rows[0];
+  return Number(r.n) === 0;
+}
+
 async function runAgentTask({ db, llm, workerId }: EngineDeps, task: TaskRow) {
   await assertAgentMayAct(db, task.agent_id);
+  if (await nothingToReview(db, task)) {
+    await audit(db, { actor: workerId, agentId: task.agent_id, action: `task.${task.type}`, outcome: "info", details: { skipped: "no new activity" }, taskId: task.id });
+    return { summary: "Skipped: no new activity since the last review, so no AI call was made.", skipped: true, cost_cents: 0 };
+  }
   const tier = await tierForTask(db, task);
   const tc = llm.tierConfig(tier);
   const def = AGENT_BY_ID[task.agent_id];
@@ -230,7 +261,14 @@ export async function healthCheck(db: Db) {
     issues.push(`dead:${t.id}`);
     await notify(db, { severity: "warning", agentId: t.agent_id, title: `Task failed permanently: ${t.title}`, body: t.last_error ?? "", dedupeKey: `dead:${t.id}` });
   }
-  const near = (await db.query(
+  const ctl = (await db.query(`SELECT per_agent_limits_enabled, global_monthly_limit FROM system_controls WHERE id`)).rows[0];
+  const gUsed = await globalMonthSpend(db);
+  if (ctl.global_monthly_limit > 0 && gUsed >= 0.8 * ctl.global_monthly_limit) {
+    issues.push("budget:global");
+    await notify(db, { severity: "warning", title: `Agents have used ${Math.round((100 * gUsed) / ctl.global_monthly_limit)}% of this month's budget`,
+      body: `$${(gUsed / 100).toFixed(2)} of $${(ctl.global_monthly_limit / 100).toFixed(2)}.`, dedupeKey: `budget80:global:${new Date().toISOString().slice(0, 7)}` });
+  }
+  const near = !ctl.per_agent_limits_enabled ? [] : (await db.query(
     `SELECT b.agent_id, b.monthly_limit,
             COALESCE(SUM(CASE WHEN s.status='settled' THEN s.settled_cents ELSE s.amount_cents END),0) AS used
        FROM agent_budgets b LEFT JOIN spend_authorizations s ON s.agent_id = b.agent_id

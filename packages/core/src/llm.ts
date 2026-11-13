@@ -52,7 +52,7 @@ export function tiersFromEnv(env = process.env): Record<Tier, TierConfig> {
   return {
     routine: {
       model: env.CLAUDE_MODEL?.trim() || "claude-haiku-5-5",
-      maxTokens: Number(env.CLAUDE_MAX_TOKENS ?? 3000),
+      maxTokens: Number(env.CLAUDE_MAX_TOKENS ?? 2000),
       effort: effort(env.CLAUDE_EFFORT, "low"),
     },
     important: {
@@ -122,8 +122,11 @@ export class ClaudeClient implements LlmClient {
         tools: req.tools,
         thinking: { type: "adaptive" },
         output_config: { effort: t.effort },
+        // Automatic caching of the growing conversation: each turn of the agent
+        // loop re-reads earlier turns from cache at ~10% of the input price.
+        cache_control: { type: "ephemeral" },
         ...fallback,
-      });
+      } as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming);
       return { content: res.content, stop_reason: res.stop_reason, usage: res.usage, model: res.model ?? t.model };
     } catch (err) {
       if (err instanceof Anthropic.RateLimitError) throw new RetryableError(`Claude rate limited: ${err.message}`, 60_000);
