@@ -7,6 +7,7 @@ import { getFinancials } from "../ledger.js";
 import { requestApproval, authorizeAction } from "../approvals.js";
 import { enqueue } from "../queue.js";
 import { getAction } from "../policy.js";
+import { notify } from "../notify.js";
 import { PolicyDenied } from "../errors.js";
 import { AGENTS, AGENT_BY_ID } from "../agents.js";
 import { getSpendSummary } from "../budget.js";
@@ -129,6 +130,23 @@ export const TOOLS: ToolSpec[] = [
       customer_id: z.string().uuid().optional(),
     }),
     handler: async (ctx, i) => ({ message_id: await sendAgentMessage(ctx.db, { from: ctx.agentId, ...i }) }),
+  }),
+  tool({
+    name: "tell_owner_blocked",
+    description: "Message the owner on Telegram ONLY when you are blocked on something only they can provide: an account or login, access to a service, a file, or a decision that is theirs. Never use it for ideas, opinions, status updates or permission you can get through request_approval; decide and learn from results yourself. Limited to 2 per day.",
+    action: "owner.notify",
+    schema: z.object({
+      need: z.string().min(10).max(300).describe("Exactly what you need from the owner, in one or two plain sentences"),
+      why: z.string().min(10).max(500).describe("What it unblocks"),
+    }),
+    handler: async (ctx, i) => {
+      const day = new Date().toISOString().slice(0, 10);
+      const sent = (await ctx.db.query(`SELECT count(*)::int AS n FROM notifications WHERE dedupe_key LIKE $1`, [`blocked:${ctx.agentId}:${day}:%`])).rows[0].n;
+      if (sent >= 2) throw new PolicyDenied("owner_notify_limit", "Already messaged the owner twice today; record the blocker in memory and work on something else");
+      await notify(ctx.db, { severity: "warning", agentId: ctx.agentId, title: `${AGENT_BY_ID[ctx.agentId]?.name ?? ctx.agentId} needs you: ${i.need}`,
+        body: `Why: ${i.why}\nReply with: ${ctx.agentId === "ceo" ? "" : "/ask " + ctx.agentId + " "}<your answer>`, dedupeKey: `blocked:${ctx.agentId}:${day}:${sent + 1}` });
+      return { sent: true, remaining_today: 1 - sent };
+    },
   }),
   tool({
     name: "propose_experiment",

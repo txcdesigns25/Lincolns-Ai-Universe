@@ -19,7 +19,7 @@ export interface AgentDefinition {
 const COMMON_TOOLS = [
   "record_memory", "search_memory", "create_draft", "submit_draft", "send_agent_message",
   "propose_experiment", "review_experiments", "conclude_experiment", "record_experiment_lesson",
-  "request_approval", "propose_strategy_update", "get_own_financials", "list_own_customers", "schedule_follow_up",
+  "request_approval", "propose_strategy_update", "get_own_financials", "list_own_customers", "schedule_follow_up", "tell_owner_blocked",
 ];
 
 export const AGENTS: AgentDefinition[] = [

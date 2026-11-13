@@ -201,7 +201,7 @@ async function executeApprovedAction({ db }: EngineDeps, task: TaskRow) {
   if (!draft_id) {
     // Purchases, contracts, refunds, etc. have no automated executor. Hand back to the owner.
     await authorizeAction(db, { agentId: task.agent_id, action, approvalId: approval_id, taskId: task.id, sandbox: true });
-    await notify(db, { severity: "info", agentId: task.agent_id, title: `Approved action needs manual execution: ${action}`,
+    await notify(db, { severity: "warning", agentId: task.agent_id, title: `Approved action needs you to do it by hand: ${action}`,
       body: `Approval ${approval_id} was approved. No automated integration exists for ${action}; complete it manually.`, dedupeKey: `manual:${approval_id}` });
     return { manual: true, action };
   }

@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import {
   tiersFromEnv, releaseStaleReservations, getDb, closeDb, createLlmFromEnv, claimNext, completeTask, failTask, parkForApproval, recoverExpiredLeases,
   extendLease, runTask, tickScheduler, processInboundEvents, PolicyDenied, RetryableError, AwaitingApproval, notify, audit,
-  telegramConfigured, pollTelegramOnce, telegramSend, initTelegram,
+  telegramConfigured, pollTelegramOnce, telegramSend, initTelegram, pushPendingApprovals, pushTaskUpdate,
 } from "@universe/core";
 
 const db = getDb();
@@ -41,6 +41,8 @@ async function housekeeping() {
   if (scheduled) log(`scheduled ${scheduled} task(s)`);
   const events = await processInboundEvents(db);
   if (events) log(`processed ${events} inbound event(s)`);
+  const pushed = await pushPendingApprovals(db);
+  if (pushed) log(`sent ${pushed} approval request(s) to Telegram`);
 }
 
 async function runOne(): Promise<boolean> {
@@ -53,6 +55,7 @@ async function runOne(): Promise<boolean> {
     await completeTask(db, task.id, workerId, result);
     const chat = (task.payload as any)?.reply_to_telegram_chat;
     if (chat) await telegramSend(chat, `${task.agent_id}: ${(result as any)?.summary || "Done."}`.slice(0, 4000)).catch(() => {});
+    await pushTaskUpdate(db, task, result).catch(() => {});
     await db.query(`UPDATE workers SET tasks_done = tasks_done + 1 WHERE id = $1`, [workerId]);
     log(`done ${task.id}`);
   } catch (err: any) {

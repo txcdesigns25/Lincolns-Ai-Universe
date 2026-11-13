@@ -23,6 +23,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
   "report.financial": { level: 1, external: false, description: "Read own financial reports" },
   "task.schedule_internal": { level: 1, external: false, description: "Schedule internal follow-up tasks" },
   "message.agent": { level: 1, external: false, description: "Send structured messages to other agents" },
+  "owner.notify": { level: 1, external: false, description: "Tell the owner you are blocked on something only they can provide (rate-limited)" },
   "experiment.propose": { level: 1, external: false, description: "Propose an experiment (does not run it)" },
   "ai.inference": { level: 1, external: false, description: "Use the Claude API within the AI budget" },
 
