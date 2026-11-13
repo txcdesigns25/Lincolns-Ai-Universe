@@ -54,7 +54,10 @@ export async function handleTelegramUpdate(db: Db, update: any, send: Send, owne
   }
   const text: string = msg.text.trim();
   const [cmdRaw, ...rest] = text.split(/\s+/);
-  const cmd = cmdRaw.startsWith("/") ? cmdRaw.slice(1).split("@")[0].toLowerCase() : "";
+  // Accept commands with or without the slash ("status" works like "/status").
+  const BARE = new Set(["status", "help", "start", "agents", "approvals", "pause", "resume", "approve", "reject", "stop", "ask", "commands"]);
+  const first = cmdRaw.toLowerCase().replace(/^\//, "").split("@")[0];
+  const cmd = cmdRaw.startsWith("/") || BARE.has(first) ? (first === "commands" ? "help" : first) : "";
   const arg = rest.join(" ");
   await audit(db, { actor: "owner:telegram", action: `telegram.${cmd || "text"}`, outcome: "info", details: { text: text.slice(0, 200) } });
 
@@ -114,7 +117,10 @@ async function askAgent(db: Db, agentId: string, message: string, chatId: number
   const status = (await db.query(`SELECT status FROM agents WHERE id = $1`, [agentId])).rows[0]?.status;
   await enqueue(db, { agentId, type: "directive", title: `Owner request: ${message.slice(0, 80)}`,
     payload: { instructions: message, from: "owner via Telegram", reply_to_telegram_chat: chatId }, priority: 2, createdBy: "owner" });
-  return send(chatId, `Sent to ${AGENT_BY_ID[agentId].name}.${status !== "active" ? ` Note: this agent is ${status}; it will run when resumed.` : " I'll message you when it's done."}`);
+  const short = Object.entries(ALIASES).find(([, v]) => v === agentId)?.[0] ?? agentId;
+  if (status !== "active")
+    return send(chatId, `Queued for ${AGENT_BY_ID[agentId].name}, but it's ${status}, so it won't answer yet.\nSend "/resume ${short}" to let it work (it uses AI budget), or "/resume all" for every agent. Your message will run as soon as it's resumed.`);
+  return send(chatId, `Sent to ${AGENT_BY_ID[agentId].name}. I'll message you the answer when it's done (usually within a minute).`);
 }
 
 async function statusText(db: Db) {

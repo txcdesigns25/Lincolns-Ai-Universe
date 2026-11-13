@@ -53,6 +53,13 @@ describe("telegram remote control", () => {
     await handleTelegramUpdate(db, msg("/budget seo 500"), send, OWNER);
     expect(last()).toMatch(/dashboard/);
   });
+  it("treats bare command words as commands and explains paused agents", async () => {
+    await handleTelegramUpdate(db, msg("status"), send, OWNER);
+    expect(last()).toMatch(/Pending approvals/);
+    await db.query(`UPDATE agents SET status = 'paused' WHERE id = 'ceo'`);
+    await handleTelegramUpdate(db, msg("what should we do first?"), send, OWNER);
+    expect(last()).toMatch(/\/resume ceo/);
+  });
   it("resolves agent aliases", () => {
     expect(resolveAgent("a04")).toBe("seo_agency");
     expect(resolveAgent("@store")).toBe("digital_store");
