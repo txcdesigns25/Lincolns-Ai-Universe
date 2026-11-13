@@ -4,6 +4,7 @@ import { withTx } from "../db.js";
 import { recordProviderEntry } from "../ledger.js";
 import { notify } from "../notify.js";
 import { audit } from "../audit.js";
+import { enqueue } from "../queue.js";
 import { ShopifyClient, shopifyConfigured } from "./shopify.js";
 import { publicBaseUrl } from "./publish.js";
 
@@ -37,6 +38,7 @@ const ORDERS_QUERY = `query($q: String, $after: String) {
 
 export async function syncStore(db: Db, client = new ShopifyClient(db)): Promise<{ orders: number; delivered: number; skipped?: string }> {
   if (!shopifyConfigured()) return { orders: 0, delivered: 0, skipped: "Shopify not configured" };
+  await promoteSandboxDrafts(db);
   const cursorRow = (await db.query(`SELECT value FROM kv_store WHERE key = 'shopify_orders_cursor'`)).rows[0]?.value;
   let since: string = cursorRow?.updated_at ?? "2026-01-01T00:00:00Z";
   let after: string | null = null, n = 0, delivered = 0, maxUpdated = since;
@@ -149,4 +151,42 @@ export async function refreshStats(db: Db) {
     await db.query(`UPDATE experiments SET results = $2, status = CASE WHEN status = 'proposed' THEN 'running' ELSE status END WHERE id = $1`,
       [experiment_id, JSON.stringify(results)]);
   }
+}
+
+/**
+ * Store work the agent did while in sandbox mode was only simulated. Once the
+ * agent is live, replay it for real, in order: latest brand first, then
+ * products that never reached Shopify, then changes to products that are live.
+ * Idempotent: each draft is replayed at most once.
+ */
+export async function promoteSandboxDrafts(db: Db): Promise<number> {
+  const live = (await db.query(`SELECT live_mode FROM agents WHERE id = $1`, [AGENT])).rows[0]?.live_mode;
+  if (!live) return 0;
+  const drafts = (await db.query(
+    `SELECT d.id, d.draft_type, d.title, d.metadata, d.created_at FROM drafts d
+      WHERE d.agent_id = $1 AND d.draft_type IN ('store_branding','store_product') AND d.status = 'published' AND d.sandbox_publish = TRUE
+      ORDER BY d.created_at`, [AGENT])).rows;
+  const latestBrand = drafts.filter((d) => d.draft_type === "store_branding").pop();
+  let n = 0;
+  for (const d of drafts) {
+    const m = d.metadata ?? {};
+    let priority: number | null = null;
+    if (d.draft_type === "store_branding") priority = d.id === latestBrand?.id ? 2 : null;
+    else if (m.op === "create") {
+      const p = (await db.query(`SELECT status, shopify_product_id FROM store_products WHERE id = $1`, [m.product_id])).rows[0];
+      priority = p && p.status === "built" && !p.shopify_product_id ? 3 : null;
+    } else if (m.op === "update") {
+      const p = (await db.query(`SELECT status FROM store_products WHERE id = $1`, [m.product_id])).rows[0];
+      priority = p && p.status !== "archived" ? 4 : null;
+    }
+    if (priority === null) continue;
+    await withTx(db, async (tx) => {
+      const r = await tx.query(`UPDATE drafts SET status = 'approved', sandbox_publish = NULL, updated_at = now() WHERE id = $1 AND status = 'published' RETURNING id`, [d.id]);
+      if (!r.rowCount) return;
+      await enqueue(tx, { agentId: AGENT, type: "execute_action", title: `Go live: ${d.title}`.slice(0, 200), payload: { action: "store.publish_owned", draft_id: d.id },
+        priority, idempotencyKey: `golive:${d.id}`, createdBy: "store_sync" });
+      n++;
+    });
+  }
+  return n;
 }
