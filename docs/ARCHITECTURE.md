@@ -63,7 +63,7 @@ Approved Level 3 actions are executed by deterministic code (`execute_action` ta
 | Customer data isolation | `customers.ts`, `messages.ts` | An agent sees a customer only if it owns it or has an owner-approved share. Messages referencing a customer require the sender to have access and grant the recipient nothing. |
 | Memory honesty | `memory.ts` + DB CHECK | `verified_result` memories must cite evidence that exists (ledger entry, concluded experiment, task). The database rejects one with no evidence. |
 | Revenue honesty | `ledger.ts` | Totals include only `verified` (Stripe/Shopify) and non-sandbox rows. The ledger and audit log are append-only (DB triggers). |
-| Shopify store guard | `integrations.ts` | Before any write, asks Shopify which shop the token belongs to and refuses TXC Designs (and anything in `SHOPIFY_BLOCKED_STORES`). |
+| Shopify store guard | `store/guard.ts`, `store/shopify.ts` | Writes need `SHOPIFY_ALLOWED_STORE` (allowlist). Before every mutation the client asks Shopify which shop the token belongs to; it must match the allowlisted myshopify domain, must not match the blocklist (TXC Designs, TXC Powersports, burning-albatross, plus `SHOPIFY_BLOCKED_STORES`), and must match the shop id pinned on first use. |
 | Telegram | `telegram.ts` | Only the owner's numeric user id in a private chat. Cannot approve money/legal requests, change budgets, enable live mode, or release the stop. |
 
 ## Autonomous growth and learning

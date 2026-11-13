@@ -16,6 +16,7 @@ import { searchMemory } from "./memory.js";
 import { executeExternal } from "./integrations.js";
 import { notify } from "./notify.js";
 import type { TaskRow } from "./queue.js";
+import { syncStore } from "./store/sync.js";
 
 export const MAX_TURNS = Number(process.env.AGENT_MAX_TURNS ?? 8);
 
@@ -26,6 +27,7 @@ const LLM_TASKS = new Set(["growth_cycle", "performance_review", "daily_summary"
 export async function runTask(deps: EngineDeps, task: TaskRow): Promise<unknown> {
   if (task.type === "execute_action") return executeApprovedAction(deps, task);
   if (task.type === "health_check") return healthCheck(deps.db);
+  if (task.type === "store_sync") return syncStore(deps.db);
   if (LLM_TASKS.has(task.type)) return runAgentTask(deps, task);
   throw new PolicyDenied("unknown_task_type", `No handler for task type ${task.type}`);
 }
@@ -64,6 +66,7 @@ async function buildSystemPrompt(db: Db, agentId: string) {
     `Responsibilities:\n- ${def.responsibilities.join("\n- ")}`,
     `Success metric: ${def.successMetric}`,
     HARD_RULES,
+    def.guidance ?? "",
     cfg ? `Your current strategy (version ${cfg.version}):\n${cfg.strategy_prompt || "(none yet)"}\nPlaybook: ${JSON.stringify(cfg.playbook)}` : "You have no saved strategy yet. Develop one from evidence and propose it with propose_strategy_update.",
   ].join("\n\n");
 }
@@ -210,7 +213,7 @@ async function executeApprovedAction({ db }: EngineDeps, task: TaskRow) {
   if (!draft || draft.agent_id !== task.agent_id) throw new PolicyDenied("draft_mismatch", "Draft missing or belongs to another agent");
   if (draft.status === "published") return { already_published: draft.published_ref };   // idempotent
   await authorizeAction(db, { agentId: task.agent_id, action, approvalId: approval_id, taskId: task.id, sandbox: !live });
-  const result = await executeExternal(action, draft, live);
+  const result = await executeExternal(action, draft, live, db);
   await withTx(db, async (tx) => {
     await tx.query(`UPDATE drafts SET status = 'published', published_ref = $2, sandbox_publish = $3, updated_at = now() WHERE id = $1`,
       [draft_id, result.ref, result.sandbox]);

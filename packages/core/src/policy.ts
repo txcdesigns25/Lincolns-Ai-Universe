@@ -33,6 +33,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
   "customer.routine_request": { level: 2, external: true, description: "Process routine authorized customer requests" },
   "workflow.run_preapproved": { level: 2, external: true, description: "Run a preapproved workflow" },
   "experiment.run_low_risk": { level: 2, external: false, description: "Run a low-risk, no-spend experiment" },
+  "store.publish_owned": { level: 2, external: true, description: "Brand the owner's designated store and list/update/archive digital products on it (Apex only; store guard enforced)" },
   "strategy.self_update": { level: 2, external: false, description: "Activate a new version of own strategy prompt / playbook / cadence (reversible)" },
 
   // Level 3

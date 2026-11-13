@@ -13,6 +13,7 @@ import { AGENTS, AGENT_BY_ID } from "../agents.js";
 import { getSpendSummary } from "../budget.js";
 import { proposeConfigVersion } from "../strategy.js";
 import type { ToolDef } from "../llm.js";
+import { STORE_TOOLS } from "../store/tools.js";
 
 export interface ToolContext {
   db: Db;
@@ -43,6 +44,8 @@ const PUBLISH_ACTION: Record<string, string> = {
   landing_page: "website.update_owned",
   ad_copy: "ads.launch",
   support_reply: "customer.routine_request",
+  store_product: "store.publish_owned",
+  store_branding: "store.publish_owned",
 };
 
 export const TOOLS: ToolSpec[] = [
@@ -323,6 +326,8 @@ export const TOOLS: ToolSpec[] = [
     },
   }),
 ];
+
+TOOLS.push(...STORE_TOOLS);
 
 export const TOOL_BY_NAME: Record<string, ToolSpec> = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
 

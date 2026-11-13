@@ -3,67 +3,53 @@
  * available, no side effects) and optionally a live one that is used only when
  * the agent is in live mode AND credentials are configured on the server.
  */
+import type { Queryable } from "./db.js";
+import { ShopifyClient, shopifyConfigured } from "./store/shopify.js";
+import { executeStoreDraft } from "./store/tools.js";
+export { isBlockedStore, DEFAULT_BLOCKED_STORES } from "./store/guard.js";
+
 export interface ExecutionResult { ref: string; sandbox: boolean; detail: string }
 
 export interface DraftForExecution { id: string; agent_id: string; draft_type: string; title: string; body: string; metadata: any }
 
 type Adapter = {
   isConfigured: () => boolean;
-  live: (d: DraftForExecution) => Promise<ExecutionResult>;
-};
-
-const shopify: Adapter = {
-  isConfigured: () => !!(process.env.SHOPIFY_STORE_DOMAIN && process.env.SHOPIFY_ADMIN_TOKEN),
-  // Creates the product via the official Admin GraphQL API. Status defaults to
-  // DRAFT so it appears in Shopify admin for a final look before going on sale.
-  live: async (d) => {
-    await assertShopifyStoreAllowed();
-    const status = process.env.SHOPIFY_PRODUCT_STATUS === "ACTIVE" ? "ACTIVE" : "DRAFT";
-    const res = await fetch(`https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2025-10/graphql.json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_TOKEN! },
-      body: JSON.stringify({
-        query: `mutation($product: ProductCreateInput!) { productCreate(product: $product) { product { id } userErrors { field message } } }`,
-        variables: { product: { title: d.title, descriptionHtml: d.body, status, productType: "Digital product", tags: ["ai-universe"] } },
-      }),
-    });
-    const json: any = await res.json();
-    const errs = json?.data?.productCreate?.userErrors ?? json?.errors;
-    if (!res.ok || (errs && errs.length)) throw new Error(`Shopify productCreate failed: ${JSON.stringify(errs ?? res.status)}`);
-    return { ref: json.data.productCreate.product.id, sandbox: false, detail: `Created Shopify product (${status})` };
-  },
+  live: (d: DraftForExecution, db: Queryable) => Promise<ExecutionResult>;
+  sandbox?: (d: DraftForExecution, db: Queryable) => Promise<void>;
 };
 
 /**
- * Hard guard: the owner's existing store must never be modified. We ask
- * Shopify which shop the token belongs to and refuse if it matches the
- * blocklist (SHOPIFY_BLOCKED_STORES, default covers TXC Designs).
+ * Generic product listing (Level 3, individual approval): creates a DRAFT
+ * product on the allowed store only. The Digital Product Store's own flow uses
+ * store.publish_owned below.
  */
-export const DEFAULT_BLOCKED_STORES = ["txc designs", "txcdesigns", "txcdesigns.com", "txc-designs"];
+const shopifyListing: Adapter = {
+  isConfigured: shopifyConfigured,
+  live: async (d, db) => {
+    const c = new ShopifyClient(db);
+    const out = await c.mutate(
+      `mutation($product: ProductCreateInput!) { productCreate(product: $product) { product { id } userErrors { field message } } }`,
+      { product: { title: d.title, descriptionHtml: d.body, status: "DRAFT", productType: "Digital product", tags: ["ai-universe"] } }, "productCreate");
+    return { ref: out.product.id, sandbox: false, detail: "Created Shopify product (DRAFT)" };
+  },
+};
 
-export function isBlockedStore(info: { name?: string; myshopifyDomain?: string; primaryHost?: string }, extra = process.env.SHOPIFY_BLOCKED_STORES): boolean {
-  const blocked = [...DEFAULT_BLOCKED_STORES, ...(extra ? extra.split(",") : [])].map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const norm = (v?: string) => (v ?? "").toLowerCase();
-  const fields = [norm(info.name), norm(info.myshopifyDomain), norm(info.primaryHost), norm(info.name).replace(/\s+/g, "")];
-  return fields.some((f) => f && blocked.some((b) => f === b || f.includes(b.replace(/\s+/g, ""))));
-}
-
-async function assertShopifyStoreAllowed() {
-  const domain = process.env.SHOPIFY_STORE_DOMAIN!;
-  if (isBlockedStore({ myshopifyDomain: domain })) throw new Error(`Refusing to write to blocked Shopify store ${domain}`);
-  const res = await fetch(`https://${domain}/admin/api/2025-10/graphql.json`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_TOKEN! },
-    body: JSON.stringify({ query: `{ shop { name myshopifyDomain primaryDomain { host } } }` }),
-  });
-  const shop = (await res.json() as any)?.data?.shop;
-  if (!shop) throw new Error("Could not verify Shopify store identity; refusing to write");
-  if (isBlockedStore({ name: shop.name, myshopifyDomain: shop.myshopifyDomain, primaryHost: shop.primaryDomain?.host }))
-    throw new Error(`Refusing to write to blocked Shopify store "${shop.name}"`);
-}
+/** Digital Product Store: brand + products on the owner's allowed store (Apex). */
+const storeOwned: Adapter = {
+  isConfigured: shopifyConfigured,
+  live: (d, db) => executeStoreDraft(db, d),
+  // In sandbox the brand is still remembered locally so products are designed under it.
+  sandbox: async (d, db) => {
+    if (d.draft_type === "store_branding" && d.metadata?.brand) {
+      await db.query(`INSERT INTO kv_store (key, value) VALUES ('store_brand', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+        [JSON.stringify({ ...d.metadata.brand, sandbox: true, applied_at: new Date().toISOString() })]);
+    }
+  },
+};
 
 const ADAPTERS: Record<string, Adapter | undefined> = {
-  "listing.publish": shopify,
+  "listing.publish": shopifyListing,
+  "store.publish_owned": storeOwned,
   // No email / social / CMS adapters are wired yet. These actions run in
   // sandbox only, which marks the draft "approved, ready to send manually".
   "outreach.send": undefined,
@@ -81,9 +67,10 @@ export function canRunLive(action: string): boolean {
   return !!ADAPTERS[action]?.isConfigured();
 }
 
-export async function executeExternal(action: string, draft: DraftForExecution, live: boolean): Promise<ExecutionResult> {
+export async function executeExternal(action: string, draft: DraftForExecution, live: boolean, db: Queryable): Promise<ExecutionResult> {
   const adapter = ADAPTERS[action];
-  if (live && adapter?.isConfigured()) return adapter.live(draft);
+  if (live && adapter?.isConfigured()) return adapter.live(draft, db);
+  await adapter?.sandbox?.(draft, db);
   return { ref: `sandbox:${action}:${draft.id}`, sandbox: true,
     detail: adapter ? "Simulated (agent in sandbox mode or credentials missing)" : "No live integration yet: approved and ready for manual sending/publishing" };
 }

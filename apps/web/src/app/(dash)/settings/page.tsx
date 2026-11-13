@@ -17,7 +17,7 @@ export default async function Settings() {
   const env = [
     ["Claude API (worker)", wc.llm === "anthropic", "ANTHROPIC_API_KEY"],
     ["Telegram bot (worker)", !!wc.telegram, "TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_ID"],
-    ["Shopify, separate store only (worker)", !!wc.shopify, "SHOPIFY_STORE_DOMAIN, SHOPIFY_ADMIN_TOKEN"],
+    ["Shopify, Apex store only (worker)", !!wc.shopify, "SHOPIFY_STORE_DOMAIN, SHOPIFY_ALLOWED_STORE, SHOPIFY_ADMIN_TOKEN or SHOPIFY_CLIENT_ID+SECRET, PUBLIC_BASE_URL"],
     ["Notification webhook (worker)", !!wc.notifyWebhook, "NOTIFY_WEBHOOK_URL"],
     ["Stripe webhooks (web)", !!process.env.STRIPE_WEBHOOK_SECRET, "STRIPE_WEBHOOK_SECRET"],
   ] as const;
@@ -43,7 +43,7 @@ export default async function Settings() {
         <Card title="Integrations">
           <Table head={["Integration", "Configured", "Env vars"]} rows={env.map(([n, ok, v]) => [n, <Badge key="b" tone={ok ? "active" : "x"}>{ok ? "yes" : "no"}</Badge>, <code key="c" className="text-xs text-muted">{v}</code>])} />
           <h3 className="mt-4 mb-2 text-xs uppercase tracking-wider text-faint">External actions</h3>
-          <Table head={["Action", "Live integration"]} rows={integrationStatus().map((i) => [<code key="a" className="text-xs">{i.action}</code>, (i.action === "listing.publish" && wc.shopify) ? <Badge key="b" tone="active">available</Badge> : <span key="b" className="text-xs text-muted">sandbox / manual</span>])} />
+          <Table head={["Action", "Live integration"]} rows={integrationStatus().map((i) => [<code key="a" className="text-xs">{i.action}</code>, ((i.action === "listing.publish" || i.action === "store.publish_owned") && wc.shopify) ? <Badge key="b" tone="active">available</Badge> : <span key="b" className="text-xs text-muted">sandbox / manual</span>])} />
         </Card>
         <Card title="Notifications" className="scroll-mt-4" >
           <div id="notifications" />
